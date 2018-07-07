@@ -1,0 +1,250 @@
+<div class="card text-center">
+  <div class="card-header">
+    <span class="card-title float-left">{{ title }}</span>
+    <div class="btn-group  float-right" role="group" aria-label="Basic example">
+        <button id="{{ chart_id }}-reset-zoom" type="button" class="btn btn-success">Reset zooming</button>
+        <button id="{{ chart_id }}-add-data" type="button" class="btn btn-danger">Connect</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="chart-container" style="position: relative; height:300px; width:90%;margin: auto">
+        <canvas id="{{ chart_id }}"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+    window.chartColors = {
+        red: 'rgb(255, 99, 132)',
+        orange: 'rgb(255, 159, 64)',
+        yellow: 'rgb(255, 205, 86)',
+        green: 'rgb(75, 192, 192)',
+        blue: 'rgb(54, 162, 235)',
+        purple: 'rgb(153, 102, 255)',
+        grey: 'rgb(201, 203, 207)'
+    };
+    // Global parameters:
+    // do not resize the chart canvas when its container does (keep at 600x400px)
+    Chart.defaults.global.responsive = true;
+
+    var x_data = [{% for value in values['x'] %}
+        {
+            x: moment('{{ value.x }}'),
+            y: {{ value.y }}
+        },
+    {% endfor %}];
+
+    var y_data = [{% for value in values['y'] %}
+        {
+            x: moment('{{ value.x }}'),
+            y: {{ value.y }}
+        },
+    {% endfor %}];
+
+    var z_data = [{% for value in values['z'] %}
+        {
+            x: moment('{{ value.x }}'),
+            y: {{ value.y }}
+        },
+    {% endfor %}];
+
+    
+
+    // define the chart data
+    var chartData = {
+        datasets: [{
+            label: 'x',
+            fill: false,
+            lineTension: 0.2,
+            borderColor: window.chartColors.blue,
+            borderCapStyle: 'butt',
+            borderDash: [],
+            borderDashOffset: 0.0,
+            borderJoinStyle: 'miter',
+            pointBorderColor: window.chartColors.blue,
+            pointBackgroundColor: "#fff",
+            pointBorderWidth: 1,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: window.chartColors.blue,
+            pointHoverBorderColor: window.chartColors.blue,
+            pointHoverBorderWidth: 2,
+            pointRadius: 1,
+            pointHitRadius: 10,
+            data: x_data,
+            spanGaps: false
+        }, {
+            label: 'y',
+            fill: false,
+            lineTension: 0.2,
+            borderColor: window.chartColors.red,
+            borderCapStyle: 'butt',
+            borderDash: [],
+            borderDashOffset: 0.0,
+            borderJoinStyle: 'miter',
+            pointBorderColor: window.chartColors.red,
+            pointBackgroundColor: "#fff",
+            pointBorderWidth: 1,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: window.chartColors.red,
+            pointHoverBorderColor: window.chartColors.red,
+            pointHoverBorderWidth: 2,
+            pointRadius: 1,
+            pointHitRadius: 10,
+            data: y_data,
+            spanGaps: false
+        }, {
+            label: 'z',
+            fill: false,
+            lineTension: 0.2,
+            borderColor: window.chartColors.green,
+            borderCapStyle: 'butt',
+            borderDash: [],
+            borderDashOffset: 0.0,
+            borderJoinStyle: 'miter',
+            pointBorderColor:window.chartColors.green,
+            pointBackgroundColor: "#fff",
+            pointBorderWidth: 1,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: window.chartColors.green,
+            pointHoverBorderColor: window.chartColors.green,
+            pointHoverBorderWidth: 2,
+            pointRadius: 1,
+            pointHitRadius: 10,
+            data: z_data,
+            spanGaps: false
+        }]
+    }
+
+    // get chart canvas
+    var ctx = document.getElementById("{{ chart_id }}").getContext("2d");
+
+    // create the chart using the chart canvas
+    var myChart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            downsample: {
+                enabled: true,
+                threshold: 500, // change this
+                
+                auto: false, // don't re-downsample the data every move
+                onInit: true, // but do resample it when we init the chart (this is default)
+                
+                preferOriginalData: true, // use our original data when downscaling so we can downscale less, if we need to.
+                restoreOriginalData: false, // if auto is false and this is true, original data will be restored on pan/zoom - that isn't what we want.
+            },
+            zoom: {
+                // Boolean to enable zooming
+                enabled: false,
+
+                // Enable drag-to-zoom behavior
+                drag: true,
+
+                // Zooming directions. Remove the appropriate direction to disable 
+                // Eg. 'y' would only allow zooming in the y direction
+                mode: 'x',
+                rangeMin: {
+                    // Format of min zoom range depends on scale type
+                    x: null,
+                    y: null
+                },
+                rangeMax: {
+                    // Format of max zoom range depends on scale type
+                    x: null,
+                    y: null
+                }
+            },
+            //showLines: false, // disable for all datasets
+            scales: {
+                xAxes: [{
+                    type: 'time',
+                    time: {
+                        unit: 'millisecond',
+                        stepSize: 5000,
+                        displayFormats: {
+                            millisecond: 'HH:mm:ss.SSS'
+                        }
+                    }
+                }]
+            }
+        }
+    });
+    $('#{{ chart_id }}-reset-zoom').click(function(){
+        myChart.resetZoom();
+    });
+
+    function addData() {
+        var chart = myChart;
+        chart.data.datasets.forEach((dataset) => {
+            var ts = dataset.data[dataset.data.length-1].x.clone();
+            ts.add(10, 'ms');
+            var new_data = {
+                x: ts,
+                y: Math.random()
+            }
+            dataset.data.push(new_data);
+            dataset.data.shift();
+        });
+        chart.update();
+    }
+
+    function addDataBuffer(data) {
+        var n_new = data.length;
+        console.log(n_new);
+        var chart = myChart;
+        var converted_data = {
+            'x': [],
+            'y': [],
+            'z': []
+        };
+        converted_data['x'] = data.map(function(sample){return {x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['X']}});
+        converted_data['y'] = data.map(function(sample){return {x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['Y']}});
+        converted_data['z'] = data.map(function(sample){return {x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['Z']}});
+        console.log('converted');
+        chart.data.datasets.forEach((dataset) => {
+            dataset.data = dataset.data.slice(n_new-1);
+            console.log(dataset.data);
+            dataset.data = dataset.data.concat(converted_data[dataset.label]);
+            console.log(dataset.data);
+        });
+        chart.update({
+            duration: 0
+        });
+    }
+
+    // var generator;
+    var data_receiver;
+
+    $('#{{ chart_id }}-add-data').click(function(){
+        if($(this).text() === 'Connect'){
+            data_receiver = new Worker('static/webworker/data_receiver.js');
+            data_receiver.onmessage = function(e){
+                if(e.data['action'] == 'error'){
+                    data_receiver.terminate();
+                    $(this).text('Connect');
+                }else if(e.data['action'] == 'data'){
+                    if(e.data.content && e.data.content.length > 0){
+                        console.log('Receiving data buffer of size: ' + e.data.content.length);
+                        addDataBuffer(e.data.content);
+                    }
+                }
+            };
+            data_receiver.postMessage({
+                'action': 'start',
+                'url': '{{ config["sensor_socket"]["url"] }}',
+                'port': '{{ config["sensor_socket"]["port"] }}',
+                'rate': '{{ config["sensor_socket"]["rate"] }}'
+            })
+            console.log('Connecting...');
+            $(this).text('Disconnect');
+        }else{
+            // clearInterval(generator);
+            data_receiver.postMessage({
+                'action': 'stop'
+            });
+            $(this).text('Connect');
+        }
+    });
+</script>

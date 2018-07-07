@@ -1,0 +1,11 @@
+<html>
+{% with title=title %}
+    {% include 'components/head.j2' %}
+{% endwith %}
+<h1>{{ title }}</h1>
+
+{% with values=values, chart_id="sensor_time_series_chart", title="Sensor signal" %}
+    {% include 'components/sensor_time_series_chart.j2' %}
+{% endwith %}
+
+</html>

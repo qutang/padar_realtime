@@ -8,6 +8,8 @@ setup(
     description='Real-time engine used to process and visualize accelerometer data for padar package',
     long_description=open('README.md').read(),
     install_requires=[
-        "websockets"
+        "websockets",
+        "flask",
+        "arrow"
     ],
 )

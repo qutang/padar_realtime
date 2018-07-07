@@ -3,6 +3,7 @@ import websockets
 import logging
 from random import random
 import functools
+import json
 
 logger = logging.getLogger()
 
@@ -58,7 +59,9 @@ class WebsocketServer:
     async def _default_producer_handler(websocket, path, producer):
         while True:
             message = await producer()
-            await websocket.send(str(message))
+            message = json.dumps(message)
+            logger.debug(message)
+            await websocket.send(message)
 
     @staticmethod
     async def _default_producer():
