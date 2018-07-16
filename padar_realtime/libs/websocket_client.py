@@ -2,8 +2,10 @@ import asyncio
 import websockets
 import logging
 import functools
+import time
 
 logger = logging.getLogger()
+
 
 class WebsocketClient:
     def __init__(self, url='localhost', port=8848, consumer_handler=None, producer_handler=None):
@@ -23,7 +25,8 @@ class WebsocketClient:
             self._consumer = WebsocketClient._default_consumer
         else:
             self._consumer = consumer
-        self._handler = functools.partial(self._consumer_handler, url=self._url, port=self._port, consumer=self._consumer)
+        self._handler = functools.partial(
+            self._consumer_handler, url=self._url, port=self._port, consumer=self._consumer)
         return self
 
     @staticmethod
@@ -35,19 +38,27 @@ class WebsocketClient:
                 message = await websocket.recv()
                 logger.info('< ' + message)
                 result = await consumer(message)
-                logger.info('> ' + str(result))
-                await websocket.send(result)
+                logger.info('result: ' + str(result))
 
     @staticmethod
     async def _default_consumer(message):
         return 'Got it!'
 
     def start(self):
-        asyncio.get_event_loop().run_until_complete(self._handler())
+        try:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+            self._loop = asyncio.get_event_loop()
+            self._loop.run_until_complete(self._handler())
+        except Exception as e:
+            logger.error('Retry connection in 3 seconds, because ' + str(e))
+            self._loop.close()
+            time.sleep(3) # wait 10 seconds and retry
+            self.start()
+
 
 if __name__ == '__main__':
     import sys
     import time
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-    client = WebsocketClient()
+    client = WebsocketClient(port=sys.argv[1])
     client.make_consumer().start()

@@ -47,7 +47,8 @@ class SensorEngine:
                 return data
             self._server.make_producer({
                 'func': _producer,
-                'desc': 'Producer for ' + activity + ' accelerometer signal at ' + str(sr) + ' Hz and ' + str(grange) + ' G range.'
+                'desc': 'Producer for ' + activity + ' accelerometer signal at ' + str(sr) + ' Hz and ' + str(grange) + ' G range.',
+                'kwargs': {}
             }).start()
         else:
             raise NotImplementedError('Unrecognized socket argument:' + socket)
