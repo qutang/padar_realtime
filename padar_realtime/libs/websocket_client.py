@@ -8,17 +8,14 @@ logger = logging.getLogger()
 
 
 class WebsocketClient:
-    def __init__(self, url='localhost', port=8848, consumer_handler=None, producer_handler=None):
+    def __init__(self, url='localhost',
+                 port=8848, consumer_handler=None, producer_handler=None):
         self._url = url
         self._port = port
         if consumer_handler is None:
             self._consumer_handler = WebsocketClient._default_consumer_handler
         else:
             self._consumer_handler = consumer_handler
-        # if producer_handler is None:
-        #     self._producer_handler = WebsocketClient._default_producer_handler
-        # else:
-        #     self._producer_handler = producer_handler
 
     def make_consumer(self, consumer=None):
         if consumer is None:
@@ -26,7 +23,8 @@ class WebsocketClient:
         else:
             self._consumer = consumer
         self._handler = functools.partial(
-            self._consumer_handler, url=self._url, port=self._port, consumer=self._consumer)
+            self._consumer_handler,
+            url=self._url, port=self._port, consumer=self._consumer)
         return self
 
     @staticmethod
@@ -52,7 +50,7 @@ class WebsocketClient:
         except Exception as e:
             logger.error('Retry connection in 3 seconds, because ' + str(e))
             self._loop.close()
-            time.sleep(3) # wait 10 seconds and retry
+            time.sleep(3)  # wait 10 seconds and retry
             self.start()
 
 

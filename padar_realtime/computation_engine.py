@@ -22,7 +22,10 @@ logger = logging.getLogger()
 
 
 class ComputationEngine:
-    def __init__(self, b_url='localhost', b_port=1111, r_url='localhost', r_port=2222, computation_interval=12.8):
+    def __init__(self,
+                 b_url='localhost', b_port=1111,
+                 r_url='localhost', r_port=2222,
+                 computation_interval=12.8):
         self._b_url = b_url
         self._b_port = b_port
         self._r_url = r_url
@@ -70,13 +73,15 @@ class ComputationEngine:
                 self._last_send = current_ts
             elif current_ts - self._last_send > self._interval:
                 logger.info(
-                    "Send to computation child process, data chunk size: " + str(len(self._input_buffer)))
+                    "Send to computation child process, data chunk size: " +
+                    str(len(self._input_buffer)))
                 data = copy.deepcopy(self._input_buffer)
                 self._sender.send_to_server(data)
                 self._input_buffer.clear()
                 self._last_send = current_ts
 
         self._sender.setup_producer(
-            producer_func=ComputationEngine.producer, desc=self._desc, func=self._func).start()
+            producer_func=ComputationEngine.producer,
+            desc=self._desc, func=self._func).start()
         self._receiver.make_consumer(consumer=consumer).start()
         return self

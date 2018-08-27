@@ -11,7 +11,8 @@ logger = logging.getLogger()
 
 
 class WebsocketServer:
-    def __init__(self, url='localhost', port=8848, consumer_handler=None, producer_handler=None):
+    def __init__(self, url='localhost',
+                 port=8848, consumer_handler=None, producer_handler=None):
         self._url = url
         self._port = port
         self._consumer_handler = WebsocketServer._default_consumer_handler
@@ -22,7 +23,8 @@ class WebsocketServer:
         if consumer is None:
             self._consumer = {
                 'func': WebsocketServer._default_consumer,
-                'desc': "This consumer append 'Hello' before the received message"
+                'desc': "This consumer append 'Hello' before \
+                 the received message"
             }
         else:
             self._consumer = consumer
@@ -90,7 +92,9 @@ class WebsocketServer:
         asyncio.get_event_loop().stop()
 
     @staticmethod
-    def child_process_starter(producer_func, desc="", queue=None, url='localhost', port=8848, verbose=True):
+    def child_process_starter(producer_func,
+                              desc="", queue=None, url='localhost',
+                              port=8848, verbose=True):
         if verbose:
             logging.basicConfig(stream=sys.stdout, level=logging.ERROR)
         logger.info('Child process: ' + desc)

@@ -22,12 +22,16 @@ app_config = {
     }
 }
 
+
 @app.route("/default_chart")
 def default_chart():
     legend = 'Monthly Data'
-    labels = ["January", "February", "March", "April", "May", "June", "July", "August"]
+    labels = ["January", "February", "March",
+              "April", "May", "June", "July", "August"]
     values = [10, 9, 8, 7, 6, 4, 7, 8]
-    return render_template('default_chart.j2', values=values, labels=labels, legend=legend)
+    return render_template('default_chart.j2',
+                           values=values, labels=labels, legend=legend)
+
 
 @app.route("/")
 def realtime_ar():
@@ -35,7 +39,8 @@ def realtime_ar():
     length = 50 * 60
     st = arrow.utcnow().to(tz.tzlocal()).float_timestamp
     times = np.arange(st, st + 0.02 * length, step=0.02)
-    times = list(map(lambda t: arrow.Arrow.fromtimestamp(t).format('YYYY-MM-DD HH:mm:ss.SSS'), times))
+    times = list(map(lambda t: arrow.Arrow.fromtimestamp(
+        t).format('YYYY-MM-DD HH:mm:ss.SSS'), times))
     data = {
         'x': [],
         'y': [],
@@ -54,11 +59,15 @@ def realtime_ar():
             'y': random(),
             'x': times[i]
         })
-    
-    return render_template("layouts/realtime_ar.j2", title='Real-time AR performance analysis', values=data, legend=legend, config=app_config)
+
+    return render_template("layouts/realtime_ar.j2",
+                           title='Real-time AR performance analysis',
+                           values=data, legend=legend, config=app_config)
+
 
 def start(debug=False):
     app.run(debug=debug)
+
 
 if __name__ == '__main__':
     start()
