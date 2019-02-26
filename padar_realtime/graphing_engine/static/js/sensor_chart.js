@@ -156,9 +156,14 @@ SensorChartEngine.prototype._initEvents = function () {
 
 SensorChartEngine.prototype._addChartData = function (data) {
     var n_new = data['x'].length;
+    var duration = 50 * 10;
     this._chart.data.datasets.forEach((dataset) => {
-        dataset.data = dataset.data.slice(n_new - 1);
+        if (dataset.data.length + n_new > duration) {
+            n_remove = dataset.data.length + n_new - duration;
+            dataset.data = dataset.data.slice(n_remove);
+        }
         dataset.data = dataset.data.concat(data[dataset.label]);
+        console.log('dataset length ' + dataset.label + ': ' + dataset.data.length);
     });
     this._chart.update({
         duration: 0
@@ -191,7 +196,7 @@ SensorChartEngine.prototype.connect = function () {
             engine.disconnect();
         } else if (e.data['action'] == 'data') {
             if (e.data.content && e.data.content.length > 0) {
-                console.log('Receiving data buffer of size: ' + e.data.content.length);
+                // console.log('Receiving data buffer of size: ' + e.data.content.length);
                 engine.updateChartData(e.data.content);
             }
         }
