@@ -7,6 +7,7 @@ import json
 import functools
 from threading import Thread
 import signal
+import os
 
 
 class MetaWearStream(Thread):
@@ -32,6 +33,7 @@ class MetaWearStream(Thread):
         self._actual_sr = 0
         self._last_minute = 0
         self._loop = loop
+        self._current_ts = 0
 
     def run(self):
         while True:
@@ -82,7 +84,11 @@ class MetaWearStream(Thread):
     def _pack_accel_data(self, data):
         result = {}
         result['ID'] = self._address
-        result['HEADER_TIME_STAMP'] = data['epoch']
+        if self._current_ts == 0:
+            self._current_ts = data['epoch'] / 1000.0
+        else:
+            self._current_ts = self._current_ts + (1.0 / float(self._accel_sr))
+        result['HEADER_TIME_STAMP'] = self._current_ts
         result['X'] = data['value'].x
         result['Y'] = data['value'].y
         result['Z'] = data['value'].z
@@ -92,14 +98,14 @@ class MetaWearStream(Thread):
         if self._last_minute == 0:
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
-            print(self._address + ' sr: ' + str(self._accel_sr))
-            self._accel_sr = 0
+            print(self._address + ' sr: ' + str(self._actual_sr))
+            self._actual_sr = 0
             self._last_minute = time.time() * 1000.0
             self._loop.call_soon_threadsafe(
                 print, self._address + ' queue size: ' + str(
                     self._accel_queue.qsize()))
         else:
-            self._accel_sr = self._accel_sr + 1
+            self._actual_sr = self._actual_sr + 1
         result = self._pack_accel_data(data)
         if len(self._clients) > 0:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
@@ -113,6 +119,9 @@ class MetaWearStreamManager(object):
         self.streams = {}
 
     def start(self, accel_sr=50, accel_grange=8, ws_server=True):
+        os.system('radiocontrol.exe Bluetooth off')
+        time.sleep(1)
+        os.system('radiocontrol.exe Bluetooth on')
         metawears = []
         while len(metawears) < self._max_devices:
             print('scanning...')
