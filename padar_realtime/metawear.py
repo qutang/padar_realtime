@@ -118,18 +118,26 @@ class MetaWearStreamManager(object):
         self._init_port = init_port
         self.streams = {}
 
-    def start(self, accel_sr=50, accel_grange=8, ws_server=True):
+    def _reset_ble_adaptor(self):
         os.system('radiocontrol.exe Bluetooth off')
         time.sleep(1)
         os.system('radiocontrol.exe Bluetooth on')
+
+    def _scan_for_metawears(self):
         metawears = []
         while len(metawears) < self._max_devices:
             print('scanning...')
             devices = discover_devices(timeout=3)
             metawears = list(filter(lambda d: d[1] == 'MetaWear', devices))
             time.sleep(1)
+        return metawears
+
+    def start(self, accel_sr=50, accel_grange=8, ws_server=True):
+        self._reset_ble_adaptor()
+        metawears = self._scan_for_metawears()
         print(metawears)
         loop = asyncio.get_event_loop()
+
         for i in range(self._max_devices):
             address = metawears[i][0]
             name = metawears[i][1]
@@ -147,9 +155,11 @@ class MetaWearStreamManager(object):
                 stream.stop()
             if ws_server:
                 stream.run_ws(loop)
-            time.sleep(2)
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+            # rest for a second before connecting to the next stream
+            time.sleep(1)
+
         if ws_server:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
             loop.run_forever()
 
 
