@@ -16,7 +16,7 @@ import concurrent.futures
 from datetime import datetime
 
 
-class ActivityRecognitionStream(object):
+class ProcessorStream(object):
     def __init__(self,
                  loop,
                  data_queue,
@@ -35,7 +35,7 @@ class ActivityRecognitionStream(object):
         self._loop = loop
         self._future_results = set()
 
-    def set_ar_pipeline(self, pipeline):
+    def set_processor_pipeline(self, pipeline):
         self._pipeline = pipeline
 
     def _sending_result(self, future):
@@ -87,7 +87,7 @@ class ActivityRecognitionStream(object):
             print('remaining clients: ' + str(len(self._clients)))
 
 
-class ActivityRecognitionStreamManager(object):
+class ProcessorStreamManager(object):
     def __init__(self,
                  loop,
                  n_data_sources=2,
@@ -99,10 +99,12 @@ class ActivityRecognitionStreamManager(object):
         self._init_output_port = init_output_port
         self._pipelines = []
         self._data_queues = []
+        self._ws_servers = []
 
-    def add_ar_stream(self, pipeline_func):
+    def add_processor_stream(self, pipeline_func, ws_server=True):
         self._pipelines.append(pipeline_func)
         self._data_queues.append(asyncio.Queue())
+        self._ws_servers.append(ws_server)
         self._output_port = len(self._pipelines) - 1 + self._init_output_port
         return self
 
@@ -130,18 +132,20 @@ class ActivityRecognitionStreamManager(object):
 
         Thread(target=_simulate).start()
 
-    def start(self, ws_server=True):
-        for pipeline, data_queue in zip(self._pipelines, self._data_queues):
-            stream = ActivityRecognitionStream(
+    def start(self):
+        for pipeline, data_queue, ws_server in zip(
+                self._pipelines, self._data_queues, self._ws_servers):
+            stream = ProcessorStream(
                 loop,
                 data_queue,
                 host='localhost',
                 port=self._output_port,
                 accel_sr=50,
                 update_rate=2)
-            stream.set_ar_pipeline(pipeline)
+            stream.set_processor_pipeline(pipeline)
             self._loop.create_task(stream.run())
-            stream.run_ws(self._loop)
+            if ws_server:
+                stream.run_ws(self._loop)
         self._loop.run_forever()
 
 
@@ -153,8 +157,8 @@ def pipeline(data):
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     loop = asyncio.get_event_loop()
-    stream_manager = ActivityRecognitionStreamManager(
+    stream_manager = ProcessorStreamManager(
         loop=loop, n_data_sources=2, init_output_port=9000)
-    stream_manager.add_ar_stream(pipeline)
+    stream_manager.add_processor_stream(pipeline, ws_server=False)
     stream_manager.start_simulation()
-    stream_manager.start(ws_server=True)
+    stream_manager.start()

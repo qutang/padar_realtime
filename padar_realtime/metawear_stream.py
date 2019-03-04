@@ -49,10 +49,12 @@ class MetaWearStream(Thread):
         m.accelerometer.set_settings(
             data_rate=self._accel_sr, data_range=self._accel_grange)
         m.accelerometer.high_frequency_stream = False
-        m.accelerometer.notifications(callback=self._handler)
+        m.accelerometer.notifications(callback=self._accel_handler)
+        m.settings.notifications(callback=self._battery_handler)
         self._device = m
         while True:
             time.sleep(1)
+            m.settings.read_battery_state()
         return self
 
     def run_ws(self, loop):
@@ -94,7 +96,19 @@ class MetaWearStream(Thread):
         result['Z'] = data['value'].z
         return json.dumps(result)
 
-    def _handler(self, data):
+    def _pack_battery_data(self, data):
+        result = {}
+        result['ID'] = self._address
+        if self._current_ts == 0:
+            self._current_ts = data['epoch'] / 1000.0
+        else:
+            self._current_ts = self._current_ts + 1.0
+        result['HEADER_TIME_STAMP'] = self._current_ts
+        result['BATTERY_PERCENTAGE'] = data['value'].charge
+        result['BATTERY_VOLTAGE'] = data['value'].voltage
+        return json.dumps(result)
+
+    def _accel_handler(self, data):
         if self._last_minute == 0:
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
@@ -107,6 +121,16 @@ class MetaWearStream(Thread):
         else:
             self._actual_sr = self._actual_sr + 1
         result = self._pack_accel_data(data)
+        if len(self._clients) > 0:
+            self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
+                                            result)
+
+    def _battery_handler(self, data):
+        battery = data['value']
+        self._loop.call_soon_threadsafe(
+            print, 'battery level: ' + str(battery.voltage) + ', ' + str(
+                battery.charge))
+        result = self._pack_battery_data(data)
         if len(self._clients) > 0:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
                                             result)
@@ -164,5 +188,5 @@ class MetaWearStreamManager(object):
 
 
 if __name__ == '__main__':
-    stream_manager = MetaWearStreamManager(max_devices=2)
+    stream_manager = MetaWearStreamManager(max_devices=1)
     stream_manager.start(ws_server=True)
