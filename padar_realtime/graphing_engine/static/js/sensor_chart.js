@@ -176,6 +176,9 @@ SensorChartEngine.prototype.updateChartData = function (data) {
 }
 
 SensorChartEngine.prototype._convertData = function (stream) {
+    stream = stream.filter(function (sample) {
+        return 'X' in sample
+    });
     var converted_data = {
         'x': [],
         'y': [],

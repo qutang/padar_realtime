@@ -1,6 +1,6 @@
 import time
 import asyncio
-from pymetawear.discover import discover_devices
+from pymetawear.discover import discover_devices, select_device
 from pymetawear.client import MetaWearClient
 import websockets
 import json
@@ -33,7 +33,8 @@ class MetaWearStream(Thread):
         self._actual_sr = 0
         self._last_minute = 0
         self._loop = loop
-        self._current_ts = 0
+        self._current_accel_ts = 0
+        self._current_battery_ts = 0
 
     def run(self):
         while True:
@@ -86,11 +87,12 @@ class MetaWearStream(Thread):
     def _pack_accel_data(self, data):
         result = {}
         result['ID'] = self._address
-        if self._current_ts == 0:
-            self._current_ts = data['epoch'] / 1000.0
+        if self._current_accel_ts == 0:
+            self._current_accel_ts = data['epoch'] / 1000.0
         else:
-            self._current_ts = self._current_ts + (1.0 / float(self._accel_sr))
-        result['HEADER_TIME_STAMP'] = self._current_ts
+            self._current_accel_ts = self._current_accel_ts + (
+                1.0 / float(self._accel_sr))
+        result['HEADER_TIME_STAMP'] = self._current_accel_ts
         result['X'] = data['value'].x
         result['Y'] = data['value'].y
         result['Z'] = data['value'].z
@@ -99,11 +101,8 @@ class MetaWearStream(Thread):
     def _pack_battery_data(self, data):
         result = {}
         result['ID'] = self._address
-        if self._current_ts == 0:
-            self._current_ts = data['epoch'] / 1000.0
-        else:
-            self._current_ts = self._current_ts + 1.0
-        result['HEADER_TIME_STAMP'] = self._current_ts
+        self._current_battery_ts = data['epoch'] / 1000.0
+        result['HEADER_TIME_STAMP'] = self._current_battery_ts
         result['BATTERY_PERCENTAGE'] = data['value'].charge
         result['BATTERY_VOLTAGE'] = data['value'].voltage
         return json.dumps(result)
@@ -151,8 +150,12 @@ class MetaWearStreamManager(object):
         metawears = []
         while len(metawears) < self._max_devices:
             print('scanning...')
-            devices = discover_devices(timeout=3)
-            metawears = list(filter(lambda d: d[1] == 'MetaWear', devices))
+            try:
+                addr = select_device(timeout=3)
+                metawears.append(addr)
+            except ValueError as e:
+                continue
+            # metawears = list(filter(lambda d: d[1] == 'MetaWear', devices))
             time.sleep(1)
         return metawears
 
@@ -163,8 +166,8 @@ class MetaWearStreamManager(object):
         loop = asyncio.get_event_loop()
 
         for i in range(self._max_devices):
-            address = metawears[i][0]
-            name = metawears[i][1]
+            address = metawears[i]
+            name = 'MetaWear'
             port = self._init_port + i
             stream = MetaWearStream(
                 loop,
