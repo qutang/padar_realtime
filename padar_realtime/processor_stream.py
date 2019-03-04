@@ -19,21 +19,27 @@ from datetime import datetime
 class ProcessorStream(object):
     def __init__(self,
                  loop,
-                 data_queue,
-                 host='localhost',
+                 allow_ws=True,
+                 host='*',
                  port=9000,
                  accel_sr=50,
                  update_rate=2):
-        # Thread.__init__(self)
         self._host = host
         self._port = port
         self._accel_sr = accel_sr
-        self._data_queue = data_queue
+        self._data_queue = asyncio.Queue()
         self._result_queue = asyncio.Queue()
         self._clients = set()
         self._server = websockets.serve(self._ws_handler, host=host, port=port)
         self._loop = loop
         self._future_results = set()
+        self._allow_ws = allow_ws
+
+    def put_input_queue(self, data):
+        self._loop.call_soon_threadsafe(self._data_queue.put_nowait, data)
+
+    def get_input_queue_size(self):
+        return self._data_queue.qsize()
 
     def set_processor_pipeline(self, pipeline):
         self._pipeline = pipeline
@@ -64,9 +70,12 @@ class ProcessorStream(object):
         print('Waiting for incoming data...')
         return self._do_computing()
 
-    def run_ws(self, loop):
-        print('Start ws server on: ' + self._host + ':' + str(self._port))
-        loop.run_until_complete(self._server)
+    def run_ws(self):
+        if self._allow_ws:
+            print('Start ws server on: ' + self._host + ':' + str(self._port))
+            self._loop.run_until_complete(self._server)
+        else:
+            print('WS server is disabled')
 
     async def result_stream(self):
         while True:
@@ -97,15 +106,25 @@ class ProcessorStreamManager(object):
         self._n_data_sources = n_data_sources
         self._init_input_port = init_input_port
         self._init_output_port = init_output_port
-        self._pipelines = []
-        self._data_queues = []
+        self._input_sources = []
+        self._output_streams = []
         self._ws_servers = []
 
-    def add_processor_stream(self, pipeline_func, ws_server=True):
-        self._pipelines.append(pipeline_func)
-        self._data_queues.append(asyncio.Queue())
-        self._ws_servers.append(ws_server)
-        self._output_port = len(self._pipelines) - 1 + self._init_output_port
+    def add_processor_stream(self,
+                             pipeline_func,
+                             accel_sr,
+                             update_rate,
+                             host='*',
+                             ws_server=True):
+        output_stream = ProcessorStream(
+            loop=self._loop,
+            allow_ws=ws_server,
+            host=host,
+            port=len(self._output_streams) + self._init_output_port,
+            accel_sr=accel_sr,
+            update_rate=update_rate)
+        output_stream.set_processor_pipeline(pipeline_func)
+        self._output_streams.append(output_stream)
         return self
 
     def start_simulation(self):
@@ -125,27 +144,16 @@ class ProcessorStreamManager(object):
                         random.random()
                     }
                     data_buffer.append(data)
-                for data_queue in self._data_queues:
-                    self._loop.call_soon_threadsafe(data_queue.put_nowait,
-                                                    data_buffer)
-                time.sleep(8)
+                for stream in self._output_streams:
+                    stream.put_input_queue(data_buffer)
+                time.sleep(5)
 
         Thread(target=_simulate).start()
 
     def start(self):
-        for pipeline, data_queue, ws_server in zip(
-                self._pipelines, self._data_queues, self._ws_servers):
-            stream = ProcessorStream(
-                loop,
-                data_queue,
-                host='localhost',
-                port=self._output_port,
-                accel_sr=50,
-                update_rate=2)
-            stream.set_processor_pipeline(pipeline)
+        for stream in self._output_streams:
             self._loop.create_task(stream.run())
-            if ws_server:
-                stream.run_ws(self._loop)
+            stream.run_ws()
         self._loop.run_forever()
 
 
@@ -159,6 +167,13 @@ if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     stream_manager = ProcessorStreamManager(
         loop=loop, n_data_sources=2, init_output_port=9000)
-    stream_manager.add_processor_stream(pipeline, ws_server=False)
+    stream_manager.add_processor_stream(
+        pipeline,
+        host='localhost',
+        accel_sr=50,
+        update_rate=0.2,
+        ws_server=True)
+    stream_manager.add_processor_stream(
+        pipeline, host='localhost', accel_sr=50, update_rate=2, ws_server=True)
     stream_manager.start_simulation()
     stream_manager.start()
