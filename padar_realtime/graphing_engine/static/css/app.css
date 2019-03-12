@@ -1,0 +1,11 @@
+.card-columns {
+    column-count: 3
+}
+
+.card-body {
+    padding: 0.5rem 1.25rem 0 0.5rem
+}
+
+form {
+    margin: 0
+}

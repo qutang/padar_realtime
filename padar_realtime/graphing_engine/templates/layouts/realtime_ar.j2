@@ -2,17 +2,43 @@
 {% with title=title %}
     {% include 'components/head.j2' %}
 {% endwith %}
-<h1>{{ title }}</h1>
-
-{% for i in range(config.max_sensors) %}
-    {% with values=values, chart_id="sensor_time_series_chart_" ~ i, title="Sensor signal", url=config.url, port=config.init_port + i, refresh_rate = config.refresh_rate %}
-        {% include 'components/sensor_time_series_chart.j2' %}
+<body>
+{% with title=title %}
+    {% include 'components/navBar.j2' %}
+{% endwith %}
+<div class='container-fluid'>
+    <h2>Signals</h2>
+    <div class='card-columns'>
+    {% for i in range(config.max_sensors) %}
+        {% with values=values, chart_id="sensor_time_series_chart_" ~ i, title="Sensor signal", url=config.url, port=config.init_port + i, refresh_rate = config.refresh_rate %}
+            {% include 'components/sensor_time_series_chart.j2' %}
+        {% endwith %}
+    {% endfor %}
+    </div>
+    <h2>Features and predictions</h2>
+    <div class='row'>
+    <div class='col-md-3'>
+    {% with values=values, chart_id="feature_time_series_chart", title="Features time series", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
+        {% include 'components/feature_time_series_chart.j2' %}
     {% endwith %}
-{% endfor %}
-
-{# {% for chart_index in range(config.max_sensors) %}
-    {% with values=values, chart_id="sensor_time_series_chart_" + chart_index, title="Sensor signal", url=config.url, port=config.init_port + chart_index, refresh_rate = config.refresh_rate %}
-        {% include 'components/sensor_time_series_chart.j2' %}
+    </div>
+    <div class='col-md-3'>
+    {% with values=values, chart_id="feature_distribution_chart", title="Features distribution", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
+        {% include 'components/feature_time_series_chart.j2' %}
     {% endwith %}
-{% endfor %} #}
+    </div>
+    <div class='col-md-3'>
+    {% with values=values, chart_id="prediction_time_series_chart", title="Predictions time series", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
+        {% include 'components/feature_time_series_chart.j2' %}
+    {% endwith %}
+    </div>
+    <div class='col-md-3'>
+    {% with values=values, chart_id="prediction_metrics_chart", title="Metrics", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
+        {% include 'components/feature_time_series_chart.j2' %}
+    {% endwith %}
+    </div>
+    </div>
+    
+</div>
+</body>
 </html>

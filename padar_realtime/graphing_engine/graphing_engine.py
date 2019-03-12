@@ -17,6 +17,7 @@ app = Flask(__name__)
 app_config = {
     'max_sensors': 2,
     'init_port': 8000,
+    'init_feature_port': 9000,
     'url': 'localhost',
     'refresh_rate': 0.1
 }

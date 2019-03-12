@@ -10,6 +10,49 @@ import signal
 import os
 
 
+class TimestampCorrector(object):
+    def __init__(self, sr, method='original'):
+        self._method = method
+        self._last_epoch = 0
+        self._current_ts = 0
+        self._sr = sr
+        self._interval = 1.0 / self._sr
+
+    def _next_original(self, data):
+        return data['epoch'] / 1000.0
+
+    def _next_noloss(self, data, last_ts):
+        if last_ts == 0:
+            current_ts = self._next_original(data)
+        else:
+            current_ts = last_ts + self._interval
+        return current_ts
+
+    def _next_withloss(self, data, last_ts, last_epoch):
+        if abs(last_epoch - data['epoch']) < self._interval:
+            current_ts = self._next_noloss(data, last_ts)
+        else:
+            next_original_ts = self._next_original(data)
+            next_noloss_ts = self._next_noloss(data, last_ts)
+            if next_original_ts - next_noloss_ts > 2 * self._interval:
+                # late for more than two intervals, renew timestamp
+                current_ts = next_original_ts
+            else:
+                current_ts = next_noloss_ts
+        self._last_epoch = self._next_original(data)
+        return current_ts
+
+    def next(self, data):
+        if self._method == 'original':
+            self._current_ts = self._next_original(data)
+        elif self._method == 'noloss':
+            self._current_ts = self._next_noloss(data, self._current_ts)
+        elif self._method == 'withloss':
+            self._current_ts = self._next_withloss(data, self._current_ts,
+                                                   self._last_epoch)
+        return self._current_ts
+
+
 class MetaWearStream(Thread):
     def __init__(self,
                  loop,
@@ -33,8 +76,15 @@ class MetaWearStream(Thread):
         self._actual_sr = 0
         self._last_minute = 0
         self._loop = loop
-        self._current_accel_ts = 0
-        self._current_battery_ts = 0
+        self._battery_ts_corrector = TimestampCorrector(
+            sr=1, method='original')
+        self._ts_corrector_original = TimestampCorrector(
+            sr=self._accel_sr, method='original')
+        self._ts_corrector_noloss = TimestampCorrector(
+            sr=self._accel_sr, method='noloss')
+        self._ts_corrector_withloss = TimestampCorrector(
+            sr=self._accel_sr, method='withloss')
+        self._last_ts = 0
 
     def run(self):
         while True:
@@ -47,18 +97,21 @@ class MetaWearStream(Thread):
                 continue
             break
         print("New metawear connected: {0}".format(m))
+        # high frequency throughput connection setup
+        m.settings.set_connection_parameters(7.5, 7.5, 0, 6000)
         m.accelerometer.set_settings(
             data_rate=self._accel_sr, data_range=self._accel_grange)
-        m.accelerometer.high_frequency_stream = False
+        m.accelerometer.high_frequency_stream = True
         m.accelerometer.notifications(callback=self._accel_handler)
-        m.settings.notifications(callback=self._battery_handler)
+        # m.settings.notifications(callback=self._battery_handler)
         self._device = m
         while True:
             time.sleep(1)
-            m.settings.read_battery_state()
+            # m.settings.read_battery_state()
         return self
 
-    def run_ws(self, loop):
+    def run_ws(self, loop, keep_history=True):
+        self._keep_history = keep_history
         print('Start ws server on: ' + self._host + ':' + str(self._port))
         loop.run_until_complete(self._server)
 
@@ -74,41 +127,54 @@ class MetaWearStream(Thread):
     async def _ws_handler(self, client, path):
         print('ws client is added')
         self._clients.add(client)
-        try:
-            async for value in self.accel_stream():
+        async for value in self.accel_stream():
+            try:
                 for client in self._clients:
                     await client.send(value)
-        except websockets.exceptions.ConnectionClosed:
-            print('ws client disconnected')
-            self._clients.remove(client)
-        finally:
-            print('remaining clients: ' + str(len(self._clients)))
+            except websockets.exceptions.ConnectionClosed:
+                print('ws client disconnected')
+                self._clients.remove(client)
+                print('remaining clients: ' + str(len(self._clients)))
 
     def _pack_accel_data(self, data):
         result = {}
         result['ID'] = self._address
-        if self._current_accel_ts == 0:
-            self._current_accel_ts = data['epoch'] / 1000.0
-        else:
-            self._current_accel_ts = self._current_accel_ts + (
-                1.0 / float(self._accel_sr))
-        result['HEADER_TIME_STAMP'] = self._current_accel_ts
+        result['HEADER_TIME_STAMP_REAL'] = time.time()
+        result[
+            'HEADER_TIME_STAMP_ORIGINAL'] = self._ts_corrector_original.next(
+                data)
+        result['HEADER_TIME_STAMP_NOLOSS'] = self._ts_corrector_noloss.next(
+            data)
+        result['HEADER_TIME_STAMP'] = self._ts_corrector_withloss.next(data)
         result['X'] = data['value'].x
         result['Y'] = data['value'].y
         result['Z'] = data['value'].z
-        return json.dumps(result)
+        return json.dumps(result), result
 
     def _pack_battery_data(self, data):
         result = {}
         result['ID'] = self._address
-        self._current_battery_ts = data['epoch'] / 1000.0
-        result['HEADER_TIME_STAMP'] = self._current_battery_ts
+        result['HEADER_TIME_STAMP'] = self._battery_ts_corrector.next(data)
         result['BATTERY_PERCENTAGE'] = data['value'].charge
         result['BATTERY_VOLTAGE'] = data['value'].voltage
         return json.dumps(result)
 
     def _accel_handler(self, data):
+        result, result_dict = self._pack_accel_data(data)
+        if result_dict['HEADER_TIME_STAMP_ORIGINAL'] < self._last_ts:
+            print('earlier sample detected')
+        else:
+            self._last_ts = result_dict['HEADER_TIME_STAMP_ORIGINAL']
+
+        if self._keep_history:
+            self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
+                                            result)
+        else:
+            if len(self._clients) > 0:
+                self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
+                                                result)
         if self._last_minute == 0:
+            print(result)
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
             print(self._address + ' sr: ' + str(self._actual_sr))
@@ -119,10 +185,6 @@ class MetaWearStream(Thread):
                     self._accel_queue.qsize()))
         else:
             self._actual_sr = self._actual_sr + 1
-        result = self._pack_accel_data(data)
-        if len(self._clients) > 0:
-            self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
-                                            result)
 
     def _battery_handler(self, data):
         battery = data['value']
@@ -130,13 +192,17 @@ class MetaWearStream(Thread):
             print, 'battery level: ' + str(battery.voltage) + ', ' + str(
                 battery.charge))
         result = self._pack_battery_data(data)
-        if len(self._clients) > 0:
+        if self._keep_history:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
                                             result)
+        else:
+            if len(self._clients) > 0:
+                self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
+                                                result)
 
 
 class MetaWearStreamManager(object):
-    def __init__(self, max_devices=1, init_port=8000):
+    def __init__(self, max_devices=2, init_port=8000):
         self._max_devices = max_devices
         self._init_port = init_port
         self.streams = {}
@@ -159,7 +225,11 @@ class MetaWearStreamManager(object):
             time.sleep(1)
         return metawears
 
-    def start(self, accel_sr=50, accel_grange=8, ws_server=True):
+    def start(self,
+              accel_sr=50,
+              accel_grange=8,
+              ws_server=True,
+              keep_history=True):
         self._reset_ble_adaptor()
         metawears = self._scan_for_metawears()
         print(metawears)
@@ -167,6 +237,7 @@ class MetaWearStreamManager(object):
 
         for i in range(self._max_devices):
             address = metawears[i]
+            # address = 'D5:D2:01:2B:E7:6D'
             name = 'MetaWear'
             port = self._init_port + i
             stream = MetaWearStream(
@@ -176,12 +247,13 @@ class MetaWearStreamManager(object):
                 port=port,
                 accel_sr=accel_sr,
                 accel_grange=accel_grange)
+            # start ws server first
+            if ws_server:
+                stream.run_ws(loop, keep_history=keep_history)
             try:
                 stream.start()
             except KeyboardInterrupt:
                 stream.stop()
-            if ws_server:
-                stream.run_ws(loop)
             # rest for a second before connecting to the next stream
             time.sleep(1)
 
@@ -192,4 +264,4 @@ class MetaWearStreamManager(object):
 
 if __name__ == '__main__':
     stream_manager = MetaWearStreamManager(max_devices=1)
-    stream_manager.start(ws_server=True)
+    stream_manager.start(ws_server=True, accel_sr=50, keep_history=True)
