@@ -8,9 +8,9 @@
 {% endwith %}
 <div class='container-fluid'>
     <h2>Signals</h2>
-    <div class='card-columns'>
+    <div class='card-group'>
     {% for i in range(config.max_sensors) %}
-        {% with values=values, chart_id="sensor_time_series_chart_" ~ i, title="Sensor signal", url=config.url, port=config.init_port + i, refresh_rate = config.refresh_rate %}
+        {% with values=values, chart_id="sensor_time_series_chart_" ~ i, title="Sensor signal:" ~ config.url ~ ':' ~ (config.init_port + i), url=config.url, port=config.init_port + i, refresh_rate = config.refresh_rate %}
             {% include 'components/sensor_time_series_chart.j2' %}
         {% endwith %}
     {% endfor %}

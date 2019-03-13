@@ -99,6 +99,12 @@ class MetaWearStream(Thread):
         print("New metawear connected: {0}".format(m))
         # high frequency throughput connection setup
         m.settings.set_connection_parameters(7.5, 7.5, 0, 6000)
+        # Up to 4dB for Class 2 BLE devices
+        # https://github.com/hbldh/pymetawear/blob/master/pymetawear/modules/settings.py
+        # https://mbientlab.com/documents/metawear/cpp/0/settings_8h.html#a335f712d5fc0587eff9671b8b105d3ed
+        # Hossain AKMM, Soh WS. A comprehensive study of Bluetooth signal parameters for localization. 2007 Ieee 18th International Symposium on Personal, Indoor and Mobile Radio Communications, Vols 1-9. 2007:428-32.
+        m.settings.set_tx_power(power=4)
+
         m.accelerometer.set_settings(
             data_rate=self._accel_sr, data_range=self._accel_grange)
         m.accelerometer.high_frequency_stream = True
