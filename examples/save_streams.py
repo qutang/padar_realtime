@@ -5,7 +5,7 @@ import os
 import signal
 
 
-def saver(chunk):
+def saver(merged):
     def _save(df, output_file):
         if df.empty:
             return
@@ -32,35 +32,50 @@ def saver(chunk):
                 mode='a',
                 header=False)
 
-    name = chunk.get_packages()[0].get_device_id()
-    data_type = chunk.get_data_type()
-    count = chunk.get_chunk_index()
+    data_type = merged['DATA_TYPE']
+    st = pd.Timestamp.fromtimestamp(merged['MERGED_CHUNK_ST'])
+    et = pd.Timestamp.fromtimestamp(merged['MERGED_CHUNK_ET'])
+    count = merged['MERGED_CHUNK_INDEX']
     os.makedirs('outputs', exist_ok=True)
-    output_file = 'outputs/' + name.replace(':', '') + '.' + data_type + '.csv'
-    packages = chunk.get_packages()
-    dfs = [package.to_dataframe() for package in packages]
-    data_df = pd.concat(dfs, axis=0, ignore_index=True)
-    data_df['INDEX'] = count
-    lock = output_file + '.lock'
-    try:
-        while os.path.exists(lock):
-            pass
-        with open(lock, 'w'):
-            print('create file lock')
-            pass
-        _save(data_df, output_file)
-    except Exception as e:
-        print(e)
-    finally:
-        if os.path.exists(lock):
-            print('remove file lock')
-            os.remove(lock)
+
+    print('')
+    print(data_type + ' merged chunk ' + str(count) + ' includes ' +
+          str(merged['N_STREAMS']) + ' stream from ' + str(st) + ' to ' +
+          str(et))
+    print('')
+
+    for chunk in merged['CHUNKS']:
+        id = chunk.get_device_id().replace(':', '')
+        name = chunk.get_stream_name()
+        output_file = 'outputs/' + id + '.' + name + '.' + data_type + '.csv'
+        packages = chunk.get_packages()
+        dfs = [package.to_dataframe() for package in packages]
+        if len(dfs) > 0:
+            data_df = pd.concat(dfs, axis=0, ignore_index=True)
+            data_df['INDEX'] = count
+            data_df['MERGED_CHUNK_ST'] = st
+            data_df['MERGED_CHUNK_ET'] = et
+            lock = output_file + '.lock'
+            try:
+                while os.path.exists(lock):
+                    pass
+                with open(lock, 'w'):
+                    pass
+                _save(data_df, output_file)
+            except Exception as e:
+                print(e)
+            finally:
+                if os.path.exists(lock):
+                    os.remove(lock)
+        else:
+            print(data_type + ' chunk ' + str(count) + ' from ' + id +
+                  ' is empty')
     return
 
 
 if __name__ == '__main__':
     import sys
-    name = sys.argv[1]
+    names = sys.argv[1:]
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     loop = asyncio.get_event_loop()
     stream_manager = ProcessorStreamManager(
@@ -71,5 +86,6 @@ if __name__ == '__main__':
         update_rate=3)
     stream_manager.add_processor_stream(
         saver, host='localhost', ws_server=False)
-    stream_manager.add_input_stream(name=name, host='localhost')
+    for name in names:
+        stream_manager.add_input_stream(name=name, host='localhost')
     stream_manager.start()

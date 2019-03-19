@@ -4,11 +4,13 @@ import pandas as pd
 
 
 class SensorStreamChunk(object):
-    def __init__(self, data_type):
+    def __init__(self, stream_name, device_id, data_type):
         self._chunk = {
             'LAST_CHUNK': None,
             'START_TIME': None,
             'STOP_TIME': None,
+            'STREAM_NAME': stream_name,
+            'DEVICE_ID': device_id,
             'PACKAGES': [],
             'DATA_TYPE': data_type,
             'CHUNK_INDEX': 0
@@ -25,6 +27,12 @@ class SensorStreamChunk(object):
 
     def get_data_type(self):
         return self._chunk['DATA_TYPE']
+
+    def get_stream_name(self):
+        return self._chunk['STREAM_NAME']
+
+    def get_device_id(self):
+        return self._chunk['DEVICE_ID']
 
     def get_chunk_index(self):
         return self._chunk['CHUNK_INDEX']
@@ -98,6 +106,9 @@ class SensorStreamPackage(object):
 
     def set_stream_name(self, stream_name):
         self._package['STREAM_NAME'] = stream_name
+
+    def get_stream_name(self):
+        return self._package['STREAM_NAME']
 
     def set_data_type(self, data_type):
         self._package['DATA_TYPE'] = data_type
