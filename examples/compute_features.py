@@ -1,27 +1,40 @@
-def featureset(df, sr):
-    df = df.set_index(df.columns[0])
-    X = df.values
-    freq = spectrum.FrequencyFeature(X, sr=sr)
-    freq.fft().peaks()
-    ori = orientation.OrientationFeature(X, subwins=4)
-    ori.estimate_orientation(unit='deg')
+from padar_features.feature_set import FeatureSet
+import pandas as pd
+import signal
+import asyncio
+from padar_realtime.processor_stream import ProcessorStreamManager
 
-    result_df = pd.concat([
-        stats.mean(X),
-        stats.std(X),
-        stats.positive_amplitude(X),
-        stats.negative_amplitude(X),
-        stats.amplitude_range(X),
-        freq.dominant_frequency(n=1),
-        freq.highend_power(),
-        freq.dominant_frequency_power_ratio(n=1),
-        freq.total_power(),
-        ori.median_angles(),
-        ori.range_angles(),
-        ori.std_angles()
-    ],
-                          axis=1)
 
-    result_df.insert(0, 'START_TIME', df.index.values[0])
-    result_df.insert(1, 'STOP_TIME', df.index.values[-1])
-    return result_df
+def compute_features(chunk):
+    if chunk.get_data_type() != 'accel':
+        feature_df = pd.DataFrame()
+    else:
+        packages = chunk.get_packages()
+        dfs = [package.to_dataframe() for package in packages]
+        data_df = pd.concat(dfs, axis=0, ignore_index=True)
+        clean_df = data_df[['X', 'Y', 'Z']]
+        X = clean_df.values
+        feature_df = FeatureSet.location_matters(X, 50)
+        feature_df['START_TIME'] = pd.Timestamp.fromtimestamp(
+            chunk.get_chunk_st())
+        feature_df['STOP_TIME'] = pd.Timestamp.fromtimestamp(
+            chunk.get_chunk_et())
+    print(feature_df)
+    return feature_df
+
+
+if __name__ == '__main__':
+    import sys
+    name = 'test'
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    loop = asyncio.get_event_loop()
+    stream_manager = ProcessorStreamManager(
+        loop=loop,
+        init_input_port=8000,
+        init_output_port=9000,
+        window_size=12.8,
+        update_rate=6.4)
+    stream_manager.add_processor_stream(
+        compute_features, host='localhost', ws_server=True)
+    stream_manager.add_input_stream(name=name, host='localhost')
+    stream_manager.start()

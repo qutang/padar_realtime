@@ -8,6 +8,7 @@ import functools
 from threading import Thread
 import signal
 import os
+from .stream_package import SensorStreamPackage
 
 
 class TimestampCorrector(object):
@@ -77,7 +78,7 @@ class MetaWearStream(Thread):
         self._last_minute = 0
         self._loop = loop
         self._battery_ts_corrector = TimestampCorrector(
-            sr=1, method='original')
+            sr=1, method='withloss')
         self._ts_corrector_original = TimestampCorrector(
             sr=self._accel_sr, method='original')
         self._ts_corrector_noloss = TimestampCorrector(
@@ -85,6 +86,8 @@ class MetaWearStream(Thread):
         self._ts_corrector_withloss = TimestampCorrector(
             sr=self._accel_sr, method='withloss')
         self._last_ts = 0
+        self._accel_count = 0
+        self._battery_count = 0
 
     def run(self):
         while True:
@@ -109,11 +112,11 @@ class MetaWearStream(Thread):
             data_rate=self._accel_sr, data_range=self._accel_grange)
         m.accelerometer.high_frequency_stream = True
         m.accelerometer.notifications(callback=self._accel_handler)
-        # m.settings.notifications(callback=self._battery_handler)
+        m.settings.notifications(callback=self._battery_handler)
         self._device = m
         while True:
             time.sleep(1)
-            # m.settings.read_battery_state()
+            m.settings.read_battery_state()
         return self
 
     def run_ws(self, loop, keep_history=True):
@@ -143,44 +146,52 @@ class MetaWearStream(Thread):
                 print('remaining clients: ' + str(len(self._clients)))
 
     def _pack_accel_data(self, data):
-        result = {}
-        result['ID'] = self._address
-        result['HEADER_TIME_STAMP_REAL'] = time.time()
-        result[
-            'HEADER_TIME_STAMP_ORIGINAL'] = self._ts_corrector_original.next(
-                data)
-        result['HEADER_TIME_STAMP_NOLOSS'] = self._ts_corrector_noloss.next(
-            data)
-        result['HEADER_TIME_STAMP'] = self._ts_corrector_withloss.next(data)
-        result['X'] = data['value'].x
-        result['Y'] = data['value'].y
-        result['Z'] = data['value'].z
-        return json.dumps(result), result
+        package = SensorStreamPackage()
+        package.set_index(self._accel_count)
+        package.set_device_id(self._address)
+        package.set_data_type('accel')
+        package.add_custom_field('HEADER_TIME_STAMP_REAL', time.time())
+        package.add_custom_field('HEADER_TIME_STAMP_ORIGINAL',
+                                 self._ts_corrector_original.next(data))
+        package.add_custom_field('HEADER_TIME_STAMP_NOLOSS',
+                                 self._ts_corrector_noloss.next(data))
+        package.set_timestamp(self._ts_corrector_withloss.next(data))
+        value = {}
+        value['X'] = data['value'].x
+        value['Y'] = data['value'].y
+        value['Z'] = data['value'].z
+        package.set_value(value)
+
+        return package.to_json_string(), package
 
     def _pack_battery_data(self, data):
-        result = {}
-        result['ID'] = self._address
-        result['HEADER_TIME_STAMP'] = self._battery_ts_corrector.next(data)
-        result['BATTERY_PERCENTAGE'] = data['value'].charge
-        result['BATTERY_VOLTAGE'] = data['value'].voltage
-        return json.dumps(result)
+        package = SensorStreamPackage()
+        package.set_index(self._battery_count)
+        package.set_device_id(self._address)
+        package.set_data_type('battery')
+        package.set_timestamp(self._battery_ts_corrector.next(data))
+        value = {}
+        value['BATTERY_VOLTAGE'] = data['value'].voltage
+        value['BATTERY_PERCENTAGE'] = data['value'].charge
+        package.set_value(value)
+        return package.to_json_string()
 
     def _accel_handler(self, data):
-        result, result_dict = self._pack_accel_data(data)
-        if result_dict['HEADER_TIME_STAMP_ORIGINAL'] < self._last_ts:
+        json_package, package = self._pack_accel_data(data)
+        if package._package['HEADER_TIME_STAMP_ORIGINAL'] < self._last_ts:
             print('earlier sample detected')
         else:
-            self._last_ts = result_dict['HEADER_TIME_STAMP_ORIGINAL']
+            self._last_ts = package._package['HEADER_TIME_STAMP_ORIGINAL']
 
         if self._keep_history:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
-                                            result)
+                                            json_package)
         else:
             if len(self._clients) > 0:
                 self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
-                                                result)
+                                                json_package)
         if self._last_minute == 0:
-            print(result)
+            print(package.to_dataframe())
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
             print(self._address + ' sr: ' + str(self._actual_sr))
@@ -191,20 +202,22 @@ class MetaWearStream(Thread):
                     self._accel_queue.qsize()))
         else:
             self._actual_sr = self._actual_sr + 1
+        self._accel_count += 1
 
     def _battery_handler(self, data):
         battery = data['value']
         self._loop.call_soon_threadsafe(
             print, 'battery level: ' + str(battery.voltage) + ', ' + str(
                 battery.charge))
-        result = self._pack_battery_data(data)
+        json_package = self._pack_battery_data(data)
         if self._keep_history:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
-                                            result)
+                                            json_package)
         else:
             if len(self._clients) > 0:
                 self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
-                                                result)
+                                                json_package)
+        self._battery_count += 1
 
 
 class MetaWearStreamManager(object):
@@ -266,8 +279,3 @@ class MetaWearStreamManager(object):
         if ws_server:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             loop.run_forever()
-
-
-if __name__ == '__main__':
-    stream_manager = MetaWearStreamManager(max_devices=1)
-    stream_manager.start(ws_server=True, accel_sr=50, keep_history=True)

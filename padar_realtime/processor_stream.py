@@ -18,6 +18,7 @@ from .input_stream import InputStream
 import json
 import copy
 import math
+from .stream_package import SensorStreamPackage, SensorStreamChunk
 
 
 class ProcessorStream(object):
@@ -47,17 +48,18 @@ class ProcessorStream(object):
         self._future_results.remove(future)
         # print('Remaining jobs: ' + str(len(self._future_results)))
         # print('computed data: ' + str(result[0]['HEADER_TIME_STAMP']))
-        # print('data_queue size: ' + str(self._data_queue.qsize()))
-        if len(self._clients) > 0:
+        # if len(self._clients) > 0:
+        if self._allow_ws:
             self._loop.call_soon_threadsafe(self._result_queue.put_nowait,
                                             result)
+            self._loop.call_soon_threadsafe(
+                print, 'result_queue size: ' + str(self._result_queue.qsize()))
 
     async def _do_computing(self):
         sleep_time = 2
         with concurrent.futures.ProcessPoolExecutor() as pool:
             while True:
                 data = await self._data_queue.get()
-                print(data['data'][0])
                 current_ts = time.time()
                 print(current_ts - self._pipeline['last_run'])
                 if self._pipeline['last_run'] == 0:
@@ -95,8 +97,10 @@ class ProcessorStream(object):
         self._clients.add(client)
         try:
             async for value in self.result_stream():
+                json_result = value.to_json(orient='records')
+                print(json_result)
                 for client in self._clients:
-                    await client.send(value)
+                    await client.send(json_result)
         except websockets.exceptions.ConnectionClosed:
             print('ws client disconnected')
             self._clients.remove(client)
@@ -126,13 +130,7 @@ class ProcessorStreamManager(object):
             self._loop,
             host=host,
             port=len(self._input_streams) + self._init_input_port)
-        self._input_streams[name] = {
-            'stream': stream,
-            'buffer': [],
-            'last_package': [],
-            'package_st': None,
-            'package_et': None
-        }
+        self._input_streams[name] = {'stream': stream, 'chunk_manager': {}}
 
     def add_processor_stream(self, pipeline_func, host='*', ws_server=True):
         output_stream = ProcessorStream(
@@ -147,50 +145,57 @@ class ProcessorStreamManager(object):
     async def _input_handler(self):
         for name, streamer in self._input_streams.items():
             async for value in streamer['stream'].get_stream():
-                data = json.loads(value)
-                if len(streamer['last_package']) == 0:
-                    if streamer['package_st'] is None:
-                        streamer['package_st'] = math.floor(
-                            data['HEADER_TIME_STAMP'])
+                input_package = SensorStreamPackage()
+                input_package.from_json_string(value)
+                data_type = input_package.get_data_type()
+
+                if data_type not in streamer['chunk_manager']:
+                    streamer['chunk_manager'][data_type] = SensorStreamChunk(
+                        data_type)
+
+                chunk = streamer['chunk_manager'][data_type]
+
+                # set start time of current chunk
+                if chunk.get_last_chunk() is None:
+                    if chunk.get_chunk_st() is None:
+                        chunk.set_chunk_st(
+                            math.floor(input_package.get_timestamp()))
                 else:
-                    if streamer['package_st'] is None:
-                        streamer['package_st'] = streamer['last_package'][-1][
-                            'HEADER_TIME_STAMP']
+                    if chunk.get_chunk_st() is None:
+                        chunk.set_chunk_st(chunk.get_last_chunk().
+                                           get_chunk_st() + self._update_rate)
 
-                streamer[
-                    'package_et'] = streamer['package_st'] + self._window_size
+                # set stop time of current chunk
+                chunk.set_chunk_et(chunk.get_chunk_st() + self._window_size)
 
-                if data['HEADER_TIME_STAMP'] <= streamer['package_st']:
+                if input_package.get_timestamp() <= chunk.get_chunk_st():
                     print('Discard samples with earlier timestamps')
                     continue
-                elif data['HEADER_TIME_STAMP'] > streamer[
-                        'package_st'] and data[
-                            'HEADER_TIME_STAMP'] <= streamer['package_et']:
-                    streamer['buffer'].append(data)
-                else:  # data['HEADER_TIME_STAMP'] >= package_et
-                    print(len(streamer['buffer']))
-                    package = copy.deepcopy({
-                        'name': name,
-                        'data': streamer['buffer'],
-                        'window_size': self._window_size,
-                        'count': self._package_count
-                    })
-                    self._package_count = self._package_count + 1
+                elif input_package.get_timestamp() > chunk.get_chunk_st(
+                ) and input_package.get_timestamp() <= chunk.get_chunk_et():
+                    chunk.add_package(input_package)
+                else:  # input_package.get_timestamp() >= chunk.get_chunk_et()
+                    chunk.clear_last_chunk()
+                    copied_chunk = copy.deepcopy(chunk)
+
+                    print('Sending chunk ' +
+                          str(copied_chunk.get_chunk_index()) +
+                          ' to input queue')
                     for output_stream in self._output_streams:
-                        output_stream.put_input_queue(package)
+                        output_stream.put_input_queue(copied_chunk)
 
-                    # save last package
-                    streamer['last_package'] = copy.deepcopy(
-                        streamer['buffer'])
-
-                    # keep only partial of current package for the next turn
-                    streamer['buffer'] = list(
+                    # keep only partial of current chunk for the next turn
+                    remaining_packages = list(
                         filter(
-                            lambda x: x['HEADER_TIME_STAMP'] > streamer['package_st'] + self._update_rate,
-                            streamer['buffer']))
-                    streamer['buffer'].append(data)
-                    streamer['package_st'] = None
-                    streamer['package_et'] = None
+                            lambda p: p.get_timestamp() > chunk.get_chunk_st() + self._update_rate,
+                            chunk.get_packages()))
+
+                    # reset chunk status
+                    chunk.set_last_chunk(copied_chunk)
+                    chunk.set_packages(remaining_packages)
+                    chunk.set_chunk_st(None)
+                    chunk.set_chunk_et(None)
+                    streamer['chunk_manager'][data_type] = chunk
 
     def start_input_streams(self):
         for _, streamer in self._input_streams.items():

@@ -176,15 +176,25 @@ SensorChartEngine.prototype._initEvents = function () {
 
 SensorChartEngine.prototype._addChartData = function (data) {
     var duration = 10; // seconds
+    var common_start_ts = 0
+    var common_end_ts = 0
     this._chart.data.datasets.forEach((dataset) => {
-        var n_new = data[dataset.label].length;
-        end_ts = 0;
-        if (n_new > 0) {
-            end_ts = data[dataset.label][n_new - 1]['x'].valueOf() / 1000.0;
-        }
-        var start_ts = end_ts
-        if (dataset.data.length != 0) {
-            start_ts = dataset.data[0]['x'].valueOf() / 1000.0;
+        var start_ts = 0
+        var end_ts = 0
+        if (dataset.label !== 'battery') {
+            var n_new = data[dataset.label].length;
+            if (n_new > 0) {
+                end_ts = data[dataset.label][n_new - 1]['x'].valueOf() / 1000.0;
+            }
+            var start_ts = end_ts
+            if (dataset.data.length != 0) {
+                start_ts = dataset.data[0]['x'].valueOf() / 1000.0;
+            }
+            common_start_ts = start_ts
+            common_end_ts = end_ts
+        } else {
+            start_ts = common_start_ts
+            end_ts = common_end_ts
         }
         if (end_ts - start_ts > duration) { // if there are more than 10s data
             keep_ts_start = end_ts - duration
@@ -206,10 +216,10 @@ SensorChartEngine.prototype.updateChartData = function (data) {
 
 SensorChartEngine.prototype._convertData = function (stream) {
     sensor_stream = stream.filter(function (sample) {
-        return 'X' in sample
+        return 'accel' === sample['DATA_TYPE']
     });
     battery_stream = stream.filter(function (sample) {
-        return 'BATTERY_PERCENTAGE' in sample
+        return 'battery' === sample['DATA_TYPE']
     });
     var converted_data = {
         'x': [],
@@ -217,9 +227,9 @@ SensorChartEngine.prototype._convertData = function (stream) {
         'z': [],
         'battery': []
     };
-    converted_data['x'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['X'] } });
-    converted_data['y'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['Y'] } });
-    converted_data['z'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['Z'] } });
+    converted_data['x'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['X'] } });
+    converted_data['y'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['Y'] } });
+    converted_data['z'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['Z'] } });
     var all_values = converted_data['x'].map(function (x) { return x['y'] }).concat(converted_data['y'].map(function (x) { return x['y'] })).concat(converted_data['z'].map(function (x) { return x['y'] }))
 
     var current_max = 0;
@@ -227,8 +237,9 @@ SensorChartEngine.prototype._convertData = function (stream) {
         current_max = ss.max(all_values)
     }
 
-    converted_data['battery'] = battery_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['BATTERY_PERCENTAGE'] + Math.ceil(current_max) } })
-
+    if (battery_stream.length > 0) {
+        converted_data['battery'] = battery_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['BATTERY_PERCENTAGE'] / 100.0 } })
+    }
     return converted_data;
 }
 

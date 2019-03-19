@@ -5,7 +5,7 @@ import os
 import signal
 
 
-def saver(data):
+def saver(chunk):
     def _save(df, output_file):
         if df.empty:
             return
@@ -32,45 +32,29 @@ def saver(data):
                 mode='a',
                 header=False)
 
-    name = data['name']
-    count = data['count']
+    name = chunk.get_packages()[0].get_device_id()
+    data_type = chunk.get_data_type()
+    count = chunk.get_chunk_index()
     os.makedirs('outputs', exist_ok=True)
-    accel_output_file = 'outputs/' + name + '.sensor.csv'
-    battery_output_file = 'outputs/' + name + '.battery.csv'
-    accel_data = list(filter(lambda x: 'X' in x, data['data']))
-    battery_data = list(filter(lambda x: 'BATTERY_VOLTAGE' in x, data['data']))
-    accel_df = pd.DataFrame(accel_data)
-    accel_df['package_index'] = count
-    battery_df = pd.DataFrame(battery_data)
-    accel_lock = accel_output_file + '.lock'
+    output_file = 'outputs/' + name.replace(':', '') + '.' + data_type + '.csv'
+    packages = chunk.get_packages()
+    dfs = [package.to_dataframe() for package in packages]
+    data_df = pd.concat(dfs, axis=0, ignore_index=True)
+    data_df['INDEX'] = count
+    lock = output_file + '.lock'
     try:
-        while os.path.exists(accel_lock):
+        while os.path.exists(lock):
             pass
-        with open(accel_lock, 'w'):
-            print('create accel lock')
+        with open(lock, 'w'):
+            print('create file lock')
             pass
-        _save(accel_df, accel_output_file)
+        _save(data_df, output_file)
     except Exception as e:
         print(e)
     finally:
-        if os.path.exists(accel_lock):
-            print('remove accel lock')
-            os.remove(accel_lock)
-
-    battery_lock = battery_output_file + '.lock'
-    try:
-        while os.path.exists(battery_lock):
-            pass
-        with open(battery_lock, 'w'):
-            print('create accel lock')
-            pass
-        _save(battery_df, battery_output_file)
-    except Exception as e:
-        print(e)
-    finally:
-        if os.path.exists(battery_lock):
-            print('remove battery lock')
-            os.remove(battery_lock)
+        if os.path.exists(lock):
+            print('remove file lock')
+            os.remove(lock)
     return
 
 
