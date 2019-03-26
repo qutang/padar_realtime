@@ -1,0 +1,14 @@
+<button id="feature-prediction-connect" type="button" class="btn btn-danger">Connect</button>
+
+<div class='card-group'>
+    {% for i in range(config.max_sensors) %}
+        {% with values=values, chart_id=config.feature_chart_ids[i], title="Features time series" %}
+            {% include 'components/feature_time_series_chart.j2' %}
+        {% endwith %}
+    {% endfor %}
+</div>
+
+<script>
+    console.log({{ config.feature_chart_ids }})
+    new ArPipelineEngine({{ config.feature_chart_ids }}, '{{ url }}', {{ port }}, {{ refresh_rate }}, 12.8);
+</script>

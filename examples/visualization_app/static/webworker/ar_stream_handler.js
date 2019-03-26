@@ -5,14 +5,16 @@ var ArStreamHandler = function (url, port, rate) {
     this._data_buffer = [];
     var thisthis = this;
     var post_data = function () {
-        var msg = {
-            action: 'data',
-            content: thisthis._data_buffer
+        if (thisthis._data_buffer.length > 0) {
+            var msg = {
+                action: 'data',
+                content: thisthis._data_buffer
+            }
+            // console.log('Sending data to main thread...');
+            // console.log(thisthis._data_buffer);
+            postMessage(msg);
+            clear_buffer();
         }
-        // console.log('Sending data to main thread...');
-        // console.log(thisthis._data_buffer);
-        postMessage(msg);
-        clear_buffer();
     };
     var clear_buffer = function () {
         thisthis._data_buffer = [];

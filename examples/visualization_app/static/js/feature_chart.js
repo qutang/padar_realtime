@@ -1,4 +1,4 @@
-function FeatureChartEngine(chart_id, url, port, refresh_rate) {
+function FeatureChart(chart_id, chart_duration) {
     this._chart_colors = {
         red: 'rgb(255, 99, 132)',
         orange: 'rgb(255, 159, 64)',
@@ -8,18 +8,18 @@ function FeatureChartEngine(chart_id, url, port, refresh_rate) {
         purple: 'rgb(153, 102, 255)',
         grey: 'rgb(201, 203, 207)'
     };
-    this._url = url;
-    this._port = port;
-    this._refresh_rate = refresh_rate;
     this._chart_id = chart_id;
-    this._chart_duration = 12.8 * 6;
+    this._chart_duration = chart_duration;
     this._chart_index = parseInt(this._chart_id.split('_').pop());
     this._chart_ctx = document.getElementById(this._chart_id).getContext("2d");
-    this._worker = new Worker('static/webworker/ar_stream_handler.js');
-    this._initEvents();
+    this._initialized = false;
 }
 
-FeatureChartEngine.prototype._initData = function (data) {
+FeatureChart.prototype.isInitialized = function () {
+    return this._initialized;
+}
+
+FeatureChart.prototype._initData = function (data) {
     var names = Object.keys(data);
     var color_names = Object.keys(this._chart_colors);
     var colors = this._chart_colors;
@@ -54,7 +54,7 @@ FeatureChartEngine.prototype._initData = function (data) {
     }
 }
 
-FeatureChartEngine.prototype._initChart = function () {
+FeatureChart.prototype._initChart = function () {
     this._chart = new Chart(this._chart_ctx, {
         type: 'line',
         data: this._chart_data,
@@ -105,28 +105,11 @@ FeatureChartEngine.prototype._initChart = function () {
     });
 }
 
-FeatureChartEngine.prototype._initEvents = function () {
-    // register reset zoom event
-    var engine = this;
-    $('#' + engine._chart_id + '-reset-zoom').click(function () {
-        engine._chart.resetZoom();
-    });
-    $('#' + engine._chart_id + '-connect').click(function () {
-        if ($(this).text() === 'Connect') {
-            engine.connect();
-            $(this).text('Disconnect');
-        } else if ($(this).text() === 'Disconnect') {
-            engine.disconnect();
-            $(this).text('Connect');
-        }
-    });
-}
-
-FeatureChartEngine.prototype._addChartData = function (data) {
+FeatureChart.prototype._addChartData = function (data) {
     var duration = this._chart_duration; // seconds
     this._chart.data.datasets.forEach((dataset) => {
         var n_new = data[dataset.label].length;
-        end_ts = 0;
+        var end_ts = 0;
         if (n_new > 0) {
             end_ts = data[dataset.label][n_new - 1]['x'].valueOf() / 1000.0;
         }
@@ -135,7 +118,7 @@ FeatureChartEngine.prototype._addChartData = function (data) {
             start_ts = dataset.data[0]['x'].valueOf() / 1000.0;
         }
         if (end_ts - start_ts > duration) { // if there are more than 10s data
-            keep_ts_start = end_ts - duration
+            var keep_ts_start = end_ts - duration
             dataset.data = dataset.data.filter(function (s) { return s['x'].valueOf() / 1000.0 >= keep_ts_start })
             console.log('dataset length (after filter) ' + dataset.label + ': ' + dataset.data.length);
         }
@@ -147,62 +130,41 @@ FeatureChartEngine.prototype._addChartData = function (data) {
     });
 }
 
-FeatureChartEngine.prototype.updateChartData = function (data) {
-    var converted_data = this._convertData(data);
-    this._addChartData(converted_data);
+FeatureChart.prototype.updateChartData = function (data) {
+    this._addChartData(data);
 }
 
-FeatureChartEngine.prototype.initChartData = function (data) {
-    var converted_data = this._convertData(data);
-    this._initData(converted_data);
+FeatureChart.prototype.initChartData = function (data) {
+    this._initData(data);
     this._initChart();
+    this._initialized = true;
 }
 
-FeatureChartEngine.prototype._convertData = function (stream) {
-    // filter out empty package
-    stream = stream.filter(function (package) { return package.length > 0 }).map(function (package) { return package[0] })
-    var names = Object.keys(stream[0])
-    feature_names = names.filter(function (name) { return name !== 'START_TIME' && name !== 'STOP_TIME' })
-    var converted_data = {}
-    feature_names.forEach(function (name) {
-        converted_data[name] = stream.map(function (sample) { return { x: moment.unix(sample['STOP_TIME'] / 1000.0).utc(), y: sample[name] } });
+FeatureChart.prototype.updateYRange = function (min_value, max_value) {
+    this._chart.options.scales.yAxes[0].ticks.max = max_value;
+    this._chart.options.scales.yAxes[0].ticks.min = min_value;
+    this._chart.update({
+        duration: 0
     });
-    return converted_data;
 }
 
-FeatureChartEngine.prototype.connect = function () {
-    var engine = this;
-    // register callback when receiving data from worker
-    this._worker.onmessage = function (e) {
-        if (e.data['action'] == 'error') {
-            engine._worker.terminate();
-            engine.disconnect();
-        } else if (e.data['action'] == 'data') {
-            if (e.data.content && e.data.content.length > 0) {
-                // console.log('Receiving data buffer of size: ' + e.data.content.length);
-                if (engine._chart === undefined) {
-                    console.log('init chart')
-                    engine.initChartData(e.data.content);
-                } else {
-                    console.log('update chart')
-                    engine.updateChartData(e.data.content);
-                }
-            }
+FeatureChart.prototype.getYRange = function () {
+    return [this._chart.scales['y-axis-0'].min, this._chart.scales['y-axis-0'].max];
+}
+
+FeatureChart.prototype.getDataRange = function () {
+    var common_max_value = 0;
+    var common_min_value = 0;
+    var chart = this;
+    this._chart.data.datasets.forEach((dataset, i) => {
+        if (chart._chart.isDatasetVisible(i)) {
+            var values = dataset.data.map(function (point) { return point['y'] });
+            var max_value = ss.max(values);
+            var min_value = ss.min(values);
+            if (max_value > common_max_value) common_max_value = max_value;
+            if (min_value < common_min_value) common_min_value = min_value;
         }
-    };
-
-    this._worker.postMessage({
-        'action': 'start',
-        'url': engine._url,
-        'port': engine._port,
-        'rate': engine._refresh_rate
-    })
-    console.log('Connecting to ws://' + engine._url + ':' + engine._port + ' at refresh rate: ' + engine._refresh_rate + ' seconds...');
-}
-
-FeatureChartEngine.prototype.disconnect = function () {
-    this._worker.postMessage({
-        'action': 'stop',
-        'port': this._port
     });
+    console.log([common_min_value, common_max_value])
+    return [common_min_value, common_max_value];
 }

@@ -1,8 +1,6 @@
 <div class="card">
   <div class="card-body">
-    <h5 class="card-title">{{ title }} <div class="btn-group btn-group-sm" role="group" aria-label="Basic example">
-        <button id="{{ chart_id }}-reset-zoom" type="button" class="btn btn-success">Reset zooming</button>
-        <button id="{{ chart_id }}-connect" type="button" class="btn btn-danger">Connect</button>
+    <h5 class="card-title">{{ title }} <div class="btn-group btn-group-sm" role="group" aria-label="Basic example">        
     </div></h5>
     
     <div class="chart-container" style="position: relative; height:250px; width:100%;margin: auto">
@@ -10,7 +8,3 @@
     </div>
   </div>
 </div>
-
-<script>
-    new FeatureChartEngine('{{ chart_id }}', '{{ url }}', {{ port }}, {{ refresh_rate }});
-</script>

@@ -18,25 +18,21 @@ class VisualizationApp(object):
     def __init__(self, num_of_devices=2):
         self._app = Flask(__name__)
         self._app_config = {
-            'max_sensors': num_of_devices,
-            'init_port': 8000,
-            'init_ar_port': 9000,
-            'url': 'localhost',
-            'refresh_rate': 0.1
+            'max_sensors':
+            num_of_devices,
+            'sensor_chart_ids':
+            ['sensor_ts_chart_' + str(i) for i in range(0, num_of_devices)],
+            'feature_chart_ids':
+            ['feature_ts_chart_' + str(i) for i in range(0, num_of_devices)],
+            'sensor_ports': [8000 + i for i in range(0, num_of_devices)],
+            'ar_port':
+            9000,
+            'url':
+            'localhost',
+            'refresh_rate':
+            0.1
         }
-        self._app.add_url_rule('/default_chart', 'default chart',
-                               self.default_chart)
         self._app.add_url_rule('/', 'App', self.realtime_ar)
-
-    def default_chart(self):
-        legend = 'Monthly Data'
-        labels = [
-            "January", "February", "March", "April", "May", "June", "July",
-            "August"
-        ]
-        values = [10, 9, 8, 7, 6, 4, 7, 8]
-        return render_template(
-            'default_chart.j2', values=values, labels=labels, legend=legend)
 
     def realtime_ar(self):
         legend = 'Acceleration'

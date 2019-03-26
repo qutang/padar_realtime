@@ -10,19 +10,15 @@
     <h2>Signals</h2>
     <div class='card-group'>
     {% for i in range(config.max_sensors) %}
-        {% with values=values, chart_id="sensor_time_series_chart_" ~ i, title="Sensor signal:" ~ config.url ~ ':' ~ (config.init_port + i), url=config.url, port=config.init_port + i, refresh_rate = config.refresh_rate %}
+        {% with values=values, chart_id=config.sensor_chart_ids[i], title="Sensor signal:" ~ config.url ~ ':' ~ config.sensor_ports[i], url=config.url, port=config.sensor_ports[i], refresh_rate = config.refresh_rate %}
             {% include 'components/sensor_time_series_chart.j2' %}
         {% endwith %}
     {% endfor %}
     </div>
     <h2>Features and predictions</h2>
-    <div class='card-group'>
-    {% with values=values, chart_id="feature_time_series_chart", title="Features time series", url=config.url, port=config.init_ar_port, refresh_rate = config.refresh_rate %}
-        {% include 'components/feature_time_series_chart.j2' %}
+    {% with values=values, url=config.url, port=config.ar_port, refresh_rate = config.refresh_rate %}
+        {% include 'components/feature_and_prediction.j2' %}
     {% endwith %}
-    </div>
-    </div>
-    
 </div>
 </body>
 </html>
