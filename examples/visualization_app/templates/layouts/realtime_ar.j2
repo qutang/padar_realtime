@@ -16,24 +16,8 @@
     {% endfor %}
     </div>
     <h2>Features and predictions</h2>
-    <div class='row'>
-    <div class='col-md-3'>
-    {% with values=values, chart_id="feature_time_series_chart", title="Features time series", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
-        {% include 'components/feature_time_series_chart.j2' %}
-    {% endwith %}
-    </div>
-    <div class='col-md-3'>
-    {% with values=values, chart_id="feature_distribution_chart", title="Features distribution", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
-        {% include 'components/feature_time_series_chart.j2' %}
-    {% endwith %}
-    </div>
-    <div class='col-md-3'>
-    {% with values=values, chart_id="prediction_time_series_chart", title="Predictions time series", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
-        {% include 'components/feature_time_series_chart.j2' %}
-    {% endwith %}
-    </div>
-    <div class='col-md-3'>
-    {% with values=values, chart_id="prediction_metrics_chart", title="Metrics", url=config.url, port=config.init_port, refresh_rate = config.refresh_rate %}
+    <div class='card-group'>
+    {% with values=values, chart_id="feature_time_series_chart", title="Features time series", url=config.url, port=config.init_ar_port, refresh_rate = config.refresh_rate %}
         {% include 'components/feature_time_series_chart.j2' %}
     {% endwith %}
     </div>

@@ -12,18 +12,19 @@ function FeatureChartEngine(chart_id, url, port, refresh_rate) {
     this._port = port;
     this._refresh_rate = refresh_rate;
     this._chart_id = chart_id;
-    this._chart_duration = 10;
+    this._chart_duration = 12.8 * 6;
     this._chart_index = parseInt(this._chart_id.split('_').pop());
     this._chart_ctx = document.getElementById(this._chart_id).getContext("2d");
-    this._worker = new Worker('static/webworker/data_receiver.js');
+    this._worker = new Worker('static/webworker/ar_stream_handler.js');
     this._initEvents();
 }
 
 FeatureChartEngine.prototype._initData = function (data) {
     var names = Object.keys(data);
     var color_names = Object.keys(this._chart_colors);
+    var colors = this._chart_colors;
     var datasets = names.map(function (name, index) {
-        var color = this._chart_colors[color_names[index % color_names.length]];
+        var color = colors[color_names[index % color_names.length]];
         var dataset = {
             label: name,
             fill: false,
@@ -43,7 +44,8 @@ FeatureChartEngine.prototype._initData = function (data) {
             pointRadius: 1,
             pointHitRadius: 10,
             data: data[name],
-            spanGaps: false
+            spanGaps: false,
+            hidden: true
         }
         return dataset
     });
@@ -92,7 +94,7 @@ FeatureChartEngine.prototype._initChart = function () {
                     type: 'time',
                     time: {
                         unit: 'millisecond',
-                        stepSize: this._chart_duration / 4 * 1000.0,
+                        stepSize: this._chart_duration * 1000.0 / 4,
                         displayFormats: {
                             millisecond: 'HH:mm:ss.SSS'
                         }
@@ -157,16 +159,14 @@ FeatureChartEngine.prototype.initChartData = function (data) {
 }
 
 FeatureChartEngine.prototype._convertData = function (stream) {
-    // get feature names
+    // filter out empty package
+    stream = stream.filter(function (package) { return package.length > 0 }).map(function (package) { return package[0] })
     var names = Object.keys(stream[0])
-    names = names.filter(function (name) { return name !== 'START_TIME' && name !== 'STOP_TIME' })
+    feature_names = names.filter(function (name) { return name !== 'START_TIME' && name !== 'STOP_TIME' })
     var converted_data = {}
-    var all_values = []
-    for (name in names) {
-        converted_data[name] = stream.map(function (sample) { return { x: moment.unix(sample['START_TIME']), y: sample[name] } });
-        all_values.concat(converted_data[name].map(function (x) { return x['y'] }))
-    }
-    var current_max = ss.max(all_values)
+    feature_names.forEach(function (name) {
+        converted_data[name] = stream.map(function (sample) { return { x: moment.unix(sample['STOP_TIME'] / 1000.0).utc(), y: sample[name] } });
+    });
     return converted_data;
 }
 
@@ -180,9 +180,11 @@ FeatureChartEngine.prototype.connect = function () {
         } else if (e.data['action'] == 'data') {
             if (e.data.content && e.data.content.length > 0) {
                 // console.log('Receiving data buffer of size: ' + e.data.content.length);
-                if (this._chart === undefined) {
+                if (engine._chart === undefined) {
+                    console.log('init chart')
                     engine.initChartData(e.data.content);
                 } else {
+                    console.log('update chart')
                     engine.updateChartData(e.data.content);
                 }
             }

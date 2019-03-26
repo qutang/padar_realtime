@@ -13,8 +13,12 @@ class SensorStreamChunk(object):
             'DEVICE_ID': device_id,
             'PACKAGES': [],
             'DATA_TYPE': data_type,
-            'CHUNK_INDEX': 0
+            'CHUNK_INDEX': 0,
+            'LAST_CHUNK_ST': None
         }
+
+    def get_chunk_size(self):
+        return len(self._chunk['PACKAGES'])
 
     def add_package(self, package):
         self._chunk['PACKAGES'].append(package)
@@ -37,18 +41,11 @@ class SensorStreamChunk(object):
     def get_chunk_index(self):
         return self._chunk['CHUNK_INDEX']
 
+    def increment_chunk_index(self):
+        self._chunk['CHUNK_INDEX'] += 1
+
     def set_data_type(self, data_type):
         self._chunk['DATA_TYPE'] = data_type
-
-    def set_last_chunk(self, last_chunk):
-        self._chunk['LAST_CHUNK'] = last_chunk
-        self._chunk['CHUNK_INDEX'] = last_chunk.get_chunk_index() + 1
-
-    def clear_last_chunk(self):
-        self._chunk['LAST_CHUNK'] = None
-
-    def get_last_chunk(self):
-        return self._chunk['LAST_CHUNK']
 
     def set_chunk_st(self, chunk_st):
         self._chunk['START_TIME'] = chunk_st
@@ -62,8 +59,21 @@ class SensorStreamChunk(object):
     def get_chunk_et(self):
         return self._chunk['STOP_TIME']
 
+    def set_last_chunk_st(self, last_chunk_st):
+        self._chunk['LAST_CHUNK_ST'] = last_chunk_st
+
+    def get_last_chunk_st(self):
+        return self._chunk['LAST_CHUNK_ST']
+
     def to_json_string(self):
         return json.dumps(self._chunk)
+
+    def __str__(self):
+        return self.get_stream_name() + ' ' + self.get_data_type(
+        ) + " chunk " + str(self.get_chunk_index()) + " size: " + str(
+            len(self.get_packages())) + ", start time: " + str(
+                self.get_chunk_st()) + ', stop time: ' + str(
+                    self.get_chunk_et())
 
     def from_json_string(self, json_chunk):
         self._chunk = json.loads(json_chunk)

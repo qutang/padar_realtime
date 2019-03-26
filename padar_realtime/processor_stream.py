@@ -23,7 +23,7 @@ from collections import deque
 
 
 class ChunkMerger(object):
-    def __init__(self, data_type, sync_st, n_streams, update_rate):
+    def __init__(self, data_type, n_streams, update_rate):
         self._data_type = data_type
         self._chunk_buffer = {}
         self._next_chunk_st = None
@@ -46,7 +46,8 @@ class ChunkMerger(object):
         matched = []
         for id, buffer in self._chunk_buffer.items():
             while len(buffer) > 0 and buffer[0].get_chunk_st() < st:
-                print('Buffer should not contain data from the past')
+                print('Discard: ' + buffer[0].get_stream_name() +
+                      ' at start time: ' + str(buffer[0].get_chunk_st()))
                 buffer.popleft()
             if len(buffer) > 0 and buffer[0].get_chunk_st == st:
                 matched.append(buffer.popleft())
@@ -55,14 +56,20 @@ class ChunkMerger(object):
     def _add_chunk(self, chunk):
         if self._next_chunk_st is None:
             # create a new merge
+            print('add to merge')
+            print(chunk)
             self._next_chunk_st = chunk.get_chunk_st()
             self._merged.append(chunk)
         else:
             if chunk.get_chunk_st() < self._next_chunk_st:
                 print('discard this chunk from past from merger')
             elif chunk.get_chunk_st() == self._next_chunk_st:
+                print('add to merge')
+                print(chunk)
                 self._merged.append(chunk)
             else:
+                print('add to buffer')
+                print(chunk)
                 self._add_to_buffer(chunk)
 
     def _add_to_buffer(self, chunk):
@@ -75,27 +82,34 @@ class ChunkMerger(object):
 
     def _is_time_to_merge(self, chunk):
         id = chunk.get_device_id()
-        existing_ids = list(map(lambda x: x.get_device_id, self._merged))
         # if we have data from every stream
         if len(self._merged) == self._n_streams:
-            print('condition 1')
             return True
         # if we have waited for more than two chunks from the same stream
         elif id in self._chunk_buffer and len(
                 self._chunk_buffer[id]) > 2 and len(self._merged) > 0:
-            print('condition 2')
+            print('size of ' + chunk.get_stream_name() + ': ' +
+                  str(len(self._chunk_buffer[id])))
             return True
         return False
 
     def _merge(self):
+        stream_names = [stream.get_stream_name() for stream in self._merged]
+        stream_names.sort()
         result = {
             'DATA_TYPE': self._merged[0].get_data_type(),
             'N_STREAMS': len(self._merged),
+            'STREAM_NAMES': stream_names,
             'CHUNKS': copy.deepcopy(self._merged),
             'MERGED_CHUNK_ST': self._merged[0].get_chunk_st(),
             'MERGED_CHUNK_ET': self._merged[0].get_chunk_et(),
             'MERGED_CHUNK_INDEX': self._merged_chunk_index
         }
+        print(result['DATA_TYPE'] + ' merged chunk ' +
+              str(result['MERGED_CHUNK_INDEX']) + ' includes ' +
+              ','.join(result['STREAM_NAMES']) + ' from ' +
+              str(result['MERGED_CHUNK_ST']) + ' to ' +
+              str(result['MERGED_CHUNK_ET']))
         self._merged_chunk_index += 1
         self._merged.clear()
         return result
@@ -112,7 +126,6 @@ class ProcessorStream(object):
         self._loop = loop
         self._future_results = set()
         self._allow_ws = allow_ws
-        self._start = True
 
     def put_input_queue(self, data):
         self._loop.call_soon_threadsafe(self._data_queue.put_nowait, data)
@@ -129,7 +142,7 @@ class ProcessorStream(object):
         # print('Remaining jobs: ' + str(len(self._future_results)))
         # print('computed data: ' + str(result[0]['HEADER_TIME_STAMP']))
         # if len(self._clients) > 0:
-        if self._allow_ws:
+        if self._allow_ws and result is not None:
             self._loop.call_soon_threadsafe(self._result_queue.put_nowait,
                                             result)
             self._loop.call_soon_threadsafe(
@@ -177,10 +190,8 @@ class ProcessorStream(object):
         self._clients.add(client)
         try:
             async for value in self.result_stream():
-                json_result = value.to_json(orient='records')
-                print(json_result)
                 for client in self._clients:
-                    await client.send(json_result)
+                    await client.send(value)
         except websockets.exceptions.ConnectionClosed:
             print('ws client disconnected')
             self._clients.remove(client)
@@ -202,17 +213,17 @@ class ProcessorStreamManager(object):
         self._output_streams = []
         self._window_size = window_size
         self._update_rate = update_rate
-        self._start = True
-        self._package_count = 0
-        self._sync_st = None
         self._merger_manager = {}
 
     def add_input_stream(self, name, host='*'):
         stream = InputStream(
             self._loop,
+            name=name,
             host=host,
-            port=len(self._input_streams) + self._init_input_port)
-        self._input_streams[name] = {'stream': stream, 'chunk_manager': {}}
+            port=len(self._input_streams) + self._init_input_port,
+            window_size=self._window_size,
+            update_rate=self._update_rate)
+        self._input_streams[name] = stream
 
     def add_processor_stream(self, pipeline_func, host='*', ws_server=True):
         output_stream = ProcessorStream(
@@ -224,103 +235,31 @@ class ProcessorStreamManager(object):
         self._output_streams.append(output_stream)
         return self
 
-    def _handle_input_stream(self, input_package, chunk_manager):
-        data_type = input_package.get_data_type()
-        stream_name = input_package.get_stream_name()
-        device_id = input_package.get_device_id()
-        if data_type not in chunk_manager:
-            chunk = SensorStreamChunk(stream_name, device_id, data_type)
-        else:
-            chunk = chunk_manager[data_type]
-
-        # set start time of current chunk
-        self.__set_chunk_st(chunk, input_package)
-
-        # set stop time of current chunk
-        self.__set_chunk_et(chunk)
-
-        # create mergers
-        if data_type not in self._merger_manager:
-            self._merger_manager[data_type] = ChunkMerger(
-                data_type,
-                self._sync_st,
-                n_streams=len(self._input_streams),
-                update_rate=self._update_rate)
-        merger = self._merger_manager[data_type]
-
-        # send chunk
-        self.__set_package_and_send_chunk(chunk, input_package, merger)
-
-        chunk_manager[data_type] = chunk
-
-    def __set_chunk_st(self, chunk, input_package):
-        if chunk.get_last_chunk() is None:
-            if chunk.get_chunk_st() is None:
-                chunk.set_chunk_st(math.floor(input_package.get_timestamp()))
-                if self._sync_st is None:
-                    self._sync_st = chunk.get_chunk_st()
-                else:
-                    chunk.set_chunk_st(self._sync_st)
-        else:
-            if chunk.get_chunk_st() is None:
-                chunk.set_chunk_st(chunk.get_last_chunk().get_chunk_st() +
-                                   self._update_rate)
-
-    def __set_chunk_et(self, chunk):
-        chunk.set_chunk_et(chunk.get_chunk_st() + self._window_size)
-
-    def __send_chunk(self, merged_chunks):
+    def _send_to_processor(self, chunk):
         for output_stream in self._output_streams:
-            output_stream.put_input_queue(merged_chunks)
+            output_stream.put_input_queue(chunk)
 
-    def __set_package_and_send_chunk(self, chunk, input_package, merger):
-        if input_package.get_timestamp() <= chunk.get_chunk_st():
-            # when the input data has a timestamp from the past, out-of-date data
-            print('Discard samples with earlier timestamps')
-            return
-        elif input_package.get_timestamp() > chunk.get_chunk_st(
-        ) and input_package.get_timestamp() <= chunk.get_chunk_et():
-            # when the input data belongs to current chunk
-            chunk.add_package(input_package)
-        else:  # input_package.get_timestamp() >= chunk.get_chunk_et()
-            # when the input data belongs to the next chunk
-            chunk.clear_last_chunk()
-            copied_chunk = copy.deepcopy(chunk)
-
-            # print('Sending ' + copied_chunk.get_data_type() + ' chunk ' +
-            #       str(copied_chunk.get_chunk_index()) + ' from ' +
-            #       copied_chunk.get_stream_name() + ' of device: ' +
-            #       copied_chunk.get_device_id() + ' to merger')
-
-            merger.process_chunk(copied_chunk, self.__send_chunk)
-
-            # keep only partial of current chunk for the next turn
-            remaining_packages = list(
-                filter(
-                    lambda p: p.get_timestamp() > chunk.get_chunk_st() + self._update_rate,
-                    chunk.get_packages()))
-
-            # reset chunk status
-            chunk.set_last_chunk(copied_chunk)
-            chunk.set_packages(remaining_packages)
-            chunk.set_chunk_st(None)
-            chunk.set_chunk_et(None)
-
-    def _create_input_package(self, stream_name, value):
-        input_package = SensorStreamPackage()
-        input_package.from_json_string(value)
-        input_package.set_stream_name(stream_name)
-        return input_package
-
-    async def _input_handler(self, name, streamer):
-        async for value in streamer['stream'].get_stream():
-            input_package = self._create_input_package(name, value)
-            self._handle_input_stream(input_package, streamer['chunk_manager'])
+    async def _input_chunk_handler(self, name, input_stream):
+        async for chunk in input_stream.get_chunk_stream():
+            data_type = chunk.get_data_type()
+            if data_type in self._merger_manager:
+                merger = self._merger_manager[data_type]
+            else:
+                merger = ChunkMerger(
+                    data_type,
+                    n_streams=len(self._input_streams),
+                    update_rate=self._update_rate)
+                self._merger_manager[data_type] = merger
+            merger.process_chunk(chunk, self._send_to_processor)
 
     def start_input_streams(self):
-        for name, streamer in self._input_streams.items():
-            streamer['stream'].start()
-            self._loop.create_task(self._input_handler(name, streamer))
+        session_st = time.time()
+        print(session_st)
+        for name, input_stream in self._input_streams.items():
+            input_stream.set_session_st(session_st)
+            input_stream.start()
+            self._loop.create_task(
+                self._input_chunk_handler(name, input_stream))
 
     def start(self):
         for stream in self._output_streams:

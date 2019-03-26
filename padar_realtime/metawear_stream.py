@@ -18,9 +18,14 @@ class TimestampCorrector(object):
         self._current_ts = 0
         self._sr = sr
         self._interval = 1.0 / self._sr
+        self._correction = 0
+        self._last_real_ts = 0
+
+    def compute_correction(self, data, real_time):
+        self._correction = real_time - data['epoch'] / 1000.0
 
     def _next_original(self, data):
-        return data['epoch'] / 1000.0
+        return data['epoch'] / 1000.0 + self._correction
 
     def _next_noloss(self, data, last_ts):
         if last_ts == 0:
@@ -29,9 +34,12 @@ class TimestampCorrector(object):
             current_ts = last_ts + self._interval
         return current_ts
 
-    def _next_withloss(self, data, last_ts, last_epoch):
-        if abs(last_epoch - data['epoch']) < self._interval:
+    def _next_withloss(self, data, last_ts, last_epoch, real_time):
+        if self._last_real_ts == 0:
+            self._last_real_ts = real_time
+        if abs(last_epoch - data['epoch'] / 1000.0) < self._interval:
             current_ts = self._next_noloss(data, last_ts)
+            real_time = self._last_real_ts + self._interval
         else:
             next_original_ts = self._next_original(data)
             next_noloss_ts = self._next_noloss(data, last_ts)
@@ -41,16 +49,19 @@ class TimestampCorrector(object):
             else:
                 current_ts = next_noloss_ts
         self._last_epoch = self._next_original(data)
+        if abs(current_ts - real_time) >= self._interval:
+            current_ts = real_time
+        self._last_real_ts = real_time
         return current_ts
 
-    def next(self, data):
+    def next(self, data, real_time):
         if self._method == 'original':
             self._current_ts = self._next_original(data)
         elif self._method == 'noloss':
             self._current_ts = self._next_noloss(data, self._current_ts)
         elif self._method == 'withloss':
             self._current_ts = self._next_withloss(data, self._current_ts,
-                                                   self._last_epoch)
+                                                   self._last_epoch, real_time)
         return self._current_ts
 
 
@@ -96,7 +107,7 @@ class MetaWearStream(Thread):
                     str(self._address), connect=True, debug=False)
             except:
                 print('Retry connect to ' + self._address)
-                time.sleep(2)
+                time.sleep(1)
                 continue
             break
         print("New metawear connected: {0}".format(m))
@@ -146,16 +157,22 @@ class MetaWearStream(Thread):
                 print('remaining clients: ' + str(len(self._clients)))
 
     def _pack_accel_data(self, data):
+        real_ts = time.time()
+        if self._accel_count == 0:
+            self._ts_corrector_original.compute_correction(data, real_ts)
+            self._ts_corrector_noloss.compute_correction(data, real_ts)
+            self._ts_corrector_withloss.compute_correction(data, real_ts)
         package = SensorStreamPackage()
         package.set_index(self._accel_count)
         package.set_device_id(self._address)
         package.set_data_type('accel')
-        package.add_custom_field('HEADER_TIME_STAMP_REAL', time.time())
-        package.add_custom_field('HEADER_TIME_STAMP_ORIGINAL',
-                                 self._ts_corrector_original.next(data))
+        package.add_custom_field('HEADER_TIME_STAMP_REAL', real_ts)
+        package.add_custom_field(
+            'HEADER_TIME_STAMP_ORIGINAL',
+            self._ts_corrector_original.next(data, real_ts))
         package.add_custom_field('HEADER_TIME_STAMP_NOLOSS',
-                                 self._ts_corrector_noloss.next(data))
-        package.set_timestamp(self._ts_corrector_withloss.next(data))
+                                 self._ts_corrector_noloss.next(data, real_ts))
+        package.set_timestamp(self._ts_corrector_withloss.next(data, real_ts))
         value = {}
         value['X'] = data['value'].x
         value['Y'] = data['value'].y
@@ -165,11 +182,14 @@ class MetaWearStream(Thread):
         return package.to_json_string(), package
 
     def _pack_battery_data(self, data):
+        real_ts = time.time()
+        if self._battery_count == 0:
+            self._battery_ts_corrector.compute_correction(data, time.time())
         package = SensorStreamPackage()
         package.set_index(self._battery_count)
         package.set_device_id(self._address)
         package.set_data_type('battery')
-        package.set_timestamp(self._battery_ts_corrector.next(data))
+        package.set_timestamp(self._battery_ts_corrector.next(data, real_ts))
         value = {}
         value['BATTERY_VOLTAGE'] = data['value'].voltage
         value['BATTERY_PERCENTAGE'] = data['value'].charge
@@ -194,7 +214,10 @@ class MetaWearStream(Thread):
             print(package.to_dataframe())
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
-            print(self._address + ' sr: ' + str(self._actual_sr))
+            print(self._address + ' sr: ' + str(self._actual_sr) + ', ' +
+                  'time diff: ' +
+                  str(package.get_timestamp() -
+                      package._package['HEADER_TIME_STAMP_REAL']))
             self._actual_sr = 0
             self._last_minute = time.time() * 1000.0
             self._loop.call_soon_threadsafe(

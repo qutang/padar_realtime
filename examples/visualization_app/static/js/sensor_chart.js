@@ -14,7 +14,7 @@ function SensorChartEngine(chart_id, url, port, refresh_rate) {
     this._chart_id = chart_id;
     this._chart_index = parseInt(this._chart_id.split('_').pop());
     this._chart_ctx = document.getElementById(this._chart_id).getContext("2d");
-    this._worker = new Worker('static/webworker/data_receiver.js');
+    this._worker = new Worker('static/webworker/sensor_stream_handler.js');
     this._initData();
     this._initChart();
     this._initEvents();

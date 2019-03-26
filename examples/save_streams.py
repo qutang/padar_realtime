@@ -37,13 +37,6 @@ def saver(merged):
     et = pd.Timestamp.fromtimestamp(merged['MERGED_CHUNK_ET'])
     count = merged['MERGED_CHUNK_INDEX']
     os.makedirs('outputs', exist_ok=True)
-
-    print('')
-    print(data_type + ' merged chunk ' + str(count) + ' includes ' +
-          str(merged['N_STREAMS']) + ' stream from ' + str(st) + ' to ' +
-          str(et))
-    print('')
-
     for chunk in merged['CHUNKS']:
         id = chunk.get_device_id().replace(':', '')
         name = chunk.get_stream_name()

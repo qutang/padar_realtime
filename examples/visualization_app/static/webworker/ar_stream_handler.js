@@ -1,4 +1,4 @@
-var DataReceiver = function (url, port, rate) {
+var ArStreamHandler = function (url, port, rate) {
     this._url = url;
     this._port = port;
     this._rate = rate;
@@ -43,7 +43,7 @@ var DataReceiver = function (url, port, rate) {
     }
 }
 
-var data_receivers = [];
+var ar_stream_handlers = [];
 
 onmessage = function (e) {
     if (e.data['action'] == 'start') {
@@ -52,28 +52,28 @@ onmessage = function (e) {
         var port = e.data['port'];
         var rate = e.data['rate'];
         console.log('Received: ' + url + ", " + port + ", " + rate);
-        var selected_receiver = data_receivers.filter(function (receiver) {
-            return receiver._port == e.data['port']
+        var selected_handler = ar_stream_handlers.filter(function (handler) {
+            return handler._port == e.data['port']
         });
-        if (selected_receiver.length == 0) {
+        if (selected_handler.length == 0) {
             console.log('Server not found, create a new one for: ' + port);
-            selected_receiver = new DataReceiver(url, port, rate);
-            data_receivers.push(selected_receiver);
+            selected_handler = new ArStreamHandler(url, port, rate);
+            ar_stream_handlers.push(selected_handler);
         } else {
-            selected_receiver = selected_receiver[0];
+            selected_handler = selected_handler[0];
             console.log('Found a server for: ' + port);
         }
-        console.log('Total data receivers: ' + data_receivers.length);
-        selected_receiver.run();
+        console.log('Total data handlers: ' + ar_stream_handlers.length);
+        selected_handler.run();
     } else if (e.data['action'] == 'stop') {
-        var selected_receiver = data_receivers.filter(function (receiver) {
-            return receiver._port == e.data['port']
+        var selected_handler = ar_stream_handlers.filter(function (handler) {
+            return handler._port == e.data['port']
         });
-        if (selected_receiver.length == 0) {
+        if (selected_handler.length == 0) {
             console.log('Server not found during stopping')
         } else {
-            selected_receiver[0].stop();
-            console.log('stop server: ' + selected_receiver[0]._port)
+            selected_handler[0].stop();
+            console.log('stop server: ' + selected_handler[0]._port)
         }
     }
 }

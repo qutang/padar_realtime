@@ -20,7 +20,7 @@ class VisualizationApp(object):
         self._app_config = {
             'max_sensors': num_of_devices,
             'init_port': 8000,
-            'init_feature_port': 9000,
+            'init_ar_port': 9000,
             'url': 'localhost',
             'refresh_rate': 0.1
         }
