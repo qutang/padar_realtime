@@ -1,4 +1,4 @@
-function FeatureChart(chart_id, chart_duration) {
+function PredictionChart(chart_id, chart_duration) {
     this._chart_colors = {
         red: 'rgb(255, 99, 132)',
         orange: 'rgb(255, 159, 64)',
@@ -15,11 +15,11 @@ function FeatureChart(chart_id, chart_duration) {
     this._initialized = false;
 }
 
-FeatureChart.prototype.isInitialized = function () {
+PredictionChart.prototype.isInitialized = function () {
     return this._initialized;
 }
 
-FeatureChart.prototype._initData = function (data) {
+PredictionChart.prototype._initData = function (data) {
     var names = Object.keys(data);
     var color_names = Object.keys(this._chart_colors);
     var colors = this._chart_colors;
@@ -54,7 +54,7 @@ FeatureChart.prototype._initData = function (data) {
     }
 }
 
-FeatureChart.prototype._initChart = function (title_text = '') {
+PredictionChart.prototype._initChart = function (title_text = '') {
     this._chart = new Chart(this._chart_ctx, {
         type: 'line',
         data: this._chart_data,
@@ -112,13 +112,19 @@ FeatureChart.prototype._initChart = function (title_text = '') {
                             millisecond: 'HH:mm:ss.SSS'
                         }
                     }
+                }],
+                yAxes: [{
+                    ticks: {
+                        min: 0,
+                        max: 1.2
+                    }
                 }]
             }
         }
     });
 }
 
-FeatureChart.prototype._addChartData = function (data) {
+PredictionChart.prototype._addChartData = function (data) {
     var duration = this._chart_duration; // seconds
     this._chart.data.datasets.forEach((dataset) => {
         var n_new = data[dataset.label].length;
@@ -143,17 +149,17 @@ FeatureChart.prototype._addChartData = function (data) {
     });
 }
 
-FeatureChart.prototype.updateChartData = function (data) {
+PredictionChart.prototype.updateChartData = function (data) {
     this._addChartData(data);
 }
 
-FeatureChart.prototype.initChartData = function (data, stream_name) {
+PredictionChart.prototype.initChartData = function (data, task_name) {
     this._initData(data);
-    this._initChart(stream_name);
+    this._initChart(task_name);
     this._initialized = true;
 }
 
-FeatureChart.prototype.updateYRange = function (min_value, max_value) {
+PredictionChart.prototype.updateYRange = function (min_value, max_value) {
     this._chart.options.scales.yAxes[0].ticks.max = max_value;
     this._chart.options.scales.yAxes[0].ticks.min = min_value;
     this._chart.update({
@@ -161,11 +167,11 @@ FeatureChart.prototype.updateYRange = function (min_value, max_value) {
     });
 }
 
-FeatureChart.prototype.getYRange = function () {
+PredictionChart.prototype.getYRange = function () {
     return [this._chart.scales['y-axis-0'].min, this._chart.scales['y-axis-0'].max];
 }
 
-FeatureChart.prototype.getDataRange = function () {
+PredictionChart.prototype.getDataRange = function () {
     var common_max_value = 0;
     var common_min_value = 0;
     var chart = this;
@@ -180,15 +186,4 @@ FeatureChart.prototype.getDataRange = function () {
     });
     console.log([common_min_value, common_max_value])
     return [common_min_value, common_max_value];
-}
-
-FeatureChart.prototype.setTitle = function (text) {
-    this._chart.options.title = {
-        display: true,
-        text: text,
-        position: 'top'
-    };
-    this._chart.update({
-        duration: 0
-    });
 }

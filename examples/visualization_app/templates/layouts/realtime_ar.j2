@@ -3,22 +3,9 @@
     {% include 'components/head.j2' %}
 {% endwith %}
 <body>
-{% with title=title %}
-    {% include 'components/navBar.j2' %}
-{% endwith %}
 <div class='container-fluid'>
-    <h2>Signals</h2>
-    <div class='card-group'>
-    {% for i in range(config.max_sensors) %}
-        {% with values=values, chart_id=config.sensor_chart_ids[i], title="Sensor signal:" ~ config.url ~ ':' ~ config.sensor_ports[i], url=config.url, port=config.sensor_ports[i], refresh_rate = config.refresh_rate %}
-            {% include 'components/sensor_time_series_chart.j2' %}
-        {% endwith %}
-    {% endfor %}
-    </div>
-    <h2>Features and predictions</h2>
-    {% with values=values, url=config.url, port=config.ar_port, refresh_rate = config.refresh_rate %}
-        {% include 'components/feature_and_prediction.j2' %}
-    {% endwith %}
+    {% include 'components/sensors.j2' %}
+    {% include 'components/feature_and_prediction.j2' %}
 </div>
 </body>
 </html>

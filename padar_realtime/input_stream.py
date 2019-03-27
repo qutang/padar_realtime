@@ -9,7 +9,6 @@ import copy
 class InputStream(Thread):
     def __init__(self,
                  loop,
-                 name,
                  host,
                  port,
                  window_size,
@@ -22,7 +21,6 @@ class InputStream(Thread):
         self._queue = asyncio.Queue()
         self._window_size = window_size
         self._update_rate = update_rate
-        self._name = name
         self._chunk_manager = {}
         self._session_st = session_st
 
@@ -32,7 +30,6 @@ class InputStream(Thread):
     def _create_input_package(self, value):
         input_package = SensorStreamPackage()
         input_package.from_json_string(value)
-        input_package.set_stream_name(self._name)
         return input_package
 
     async def _ws_handler(self):
@@ -54,8 +51,11 @@ class InputStream(Thread):
         package = self._create_input_package(data)
         data_type = package.get_data_type()
         device_id = package.get_device_id()
+        stream_name = package.get_stream_name()
+        stream_order = package.get_stream_order()
         if data_type not in self._chunk_manager:
-            chunk = SensorStreamChunk(self._name, device_id, data_type)
+            chunk = SensorStreamChunk(stream_order, stream_name, device_id,
+                                      data_type)
         else:
             chunk = self._chunk_manager[data_type]
 

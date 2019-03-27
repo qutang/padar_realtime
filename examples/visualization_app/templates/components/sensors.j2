@@ -1,0 +1,14 @@
+<button id="sensors-connect" type="button" class="btn btn-danger btn-sm">Connect</button>
+
+<div class='card-group'>
+    {% for i in range(config.max_sensors) %}
+        {% with values=values, chart_id=config.sensor_chart_ids[i] %}
+            {% include 'components/sensor_time_series_chart.j2' %}
+        {% endwith %}
+    {% endfor %}
+</div>
+
+<script>
+    console.log({{ config.sensor_chart_ids }})
+    new SensorEngine({{ config.sensor_chart_ids }}, '{{ config.url }}', {{ config.sensor_ports }}, {{ config.refresh_rate }}, {{ config.window_size }});
+</script>

@@ -70,6 +70,7 @@ class MetaWearStream(Thread):
                  loop,
                  address,
                  name,
+                 order,
                  host='localhost',
                  port=8000,
                  accel_sr=50,
@@ -80,6 +81,7 @@ class MetaWearStream(Thread):
         self._accel_grange = accel_grange
         self._address = address
         self._name = name
+        self._order = order
         self._accel_queue = asyncio.Queue()
         self._clients = set()
         self._host = host
@@ -165,6 +167,8 @@ class MetaWearStream(Thread):
         package = SensorStreamPackage()
         package.set_index(self._accel_count)
         package.set_device_id(self._address)
+        package.set_stream_name(self._name)
+        package.set_stream_order(self._order)
         package.set_data_type('accel')
         package.add_custom_field('HEADER_TIME_STAMP_REAL', real_ts)
         package.add_custom_field(
@@ -188,6 +192,8 @@ class MetaWearStream(Thread):
         package = SensorStreamPackage()
         package.set_index(self._battery_count)
         package.set_device_id(self._address)
+        package.set_stream_name(self._name)
+        package.set_stream_order(self._order)
         package.set_data_type('battery')
         package.set_timestamp(self._battery_ts_corrector.next(data, real_ts))
         value = {}
@@ -256,16 +262,19 @@ class MetaWearStreamManager(object):
 
     def _scan_for_metawears(self):
         metawears = []
+        metawear_stream_names = []
         while len(metawears) < self._max_devices:
             print('scanning...')
             try:
                 addr = select_device(timeout=3)
+                stream_name = input('enter stream name: ')
                 metawears.append(addr)
+                metawear_stream_names.append(stream_name)
             except ValueError as e:
                 continue
             # metawears = list(filter(lambda d: d[1] == 'MetaWear', devices))
             time.sleep(1)
-        return metawears
+        return metawears, metawear_stream_names
 
     def start(self,
               accel_sr=50,
@@ -273,19 +282,21 @@ class MetaWearStreamManager(object):
               ws_server=True,
               keep_history=True):
         self._reset_ble_adaptor()
-        metawears = self._scan_for_metawears()
+        metawears, metawear_stream_names = self._scan_for_metawears()
         print(metawears)
+        print(metawear_stream_names)
         loop = asyncio.get_event_loop()
 
         for i in range(self._max_devices):
             address = metawears[i]
             # address = 'D5:D2:01:2B:E7:6D'
-            name = 'MetaWear'
+            name = metawear_stream_names[i]
             port = self._init_port + i
             stream = MetaWearStream(
                 loop,
                 address,
                 name,
+                i,
                 port=port,
                 accel_sr=accel_sr,
                 accel_grange=accel_grange)

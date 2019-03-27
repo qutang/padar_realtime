@@ -20,6 +20,7 @@ import copy
 import math
 from .stream_package import SensorStreamPackage, SensorStreamChunk
 from collections import deque
+from functools import partial
 
 
 class ChunkMerger(object):
@@ -94,8 +95,8 @@ class ChunkMerger(object):
         return False
 
     def _merge(self):
+        self._merged.sort(key=lambda chunk: chunk.get_stream_order())
         stream_names = [stream.get_stream_name() for stream in self._merged]
-        stream_names.sort()
         result = {
             'DATA_TYPE': self._merged[0].get_data_type(),
             'N_STREAMS': len(self._merged),
@@ -133,8 +134,9 @@ class ProcessorStream(object):
     def get_input_queue_size(self):
         return self._data_queue.qsize()
 
-    def set_processor_pipeline(self, pipeline):
-        self._pipeline = {'func': pipeline, 'last_run': 0}
+    def set_processor_pipeline(self, pipeline, **kwargs):
+        func = partial(pipeline, **kwargs)
+        self._pipeline = {'func': func, 'last_run': 0}
 
     def _sending_result(self, future):
         result = future.result()
@@ -209,29 +211,32 @@ class ProcessorStreamManager(object):
         self._loop = loop
         self._init_input_port = init_input_port
         self._init_output_port = init_output_port
-        self._input_streams = {}
+        self._input_streams = []
         self._output_streams = []
         self._window_size = window_size
         self._update_rate = update_rate
         self._merger_manager = {}
 
-    def add_input_stream(self, name, host='*'):
+    def add_input_stream(self, host='*'):
         stream = InputStream(
             self._loop,
-            name=name,
             host=host,
             port=len(self._input_streams) + self._init_input_port,
             window_size=self._window_size,
             update_rate=self._update_rate)
-        self._input_streams[name] = stream
+        self._input_streams.append(stream)
 
-    def add_processor_stream(self, pipeline_func, host='*', ws_server=True):
+    def add_processor_stream(self,
+                             pipeline_func,
+                             host='*',
+                             ws_server=True,
+                             **kwargs):
         output_stream = ProcessorStream(
             loop=self._loop,
             allow_ws=ws_server,
             host=host,
             port=len(self._output_streams) + self._init_output_port)
-        output_stream.set_processor_pipeline(pipeline_func)
+        output_stream.set_processor_pipeline(pipeline_func, **kwargs)
         self._output_streams.append(output_stream)
         return self
 
@@ -239,7 +244,7 @@ class ProcessorStreamManager(object):
         for output_stream in self._output_streams:
             output_stream.put_input_queue(chunk)
 
-    async def _input_chunk_handler(self, name, input_stream):
+    async def _input_chunk_handler(self, input_stream):
         async for chunk in input_stream.get_chunk_stream():
             data_type = chunk.get_data_type()
             if data_type in self._merger_manager:
@@ -255,11 +260,10 @@ class ProcessorStreamManager(object):
     def start_input_streams(self):
         session_st = time.time()
         print(session_st)
-        for name, input_stream in self._input_streams.items():
+        for input_stream in self._input_streams:
             input_stream.set_session_st(session_st)
             input_stream.start()
-            self._loop.create_task(
-                self._input_chunk_handler(name, input_stream))
+            self._loop.create_task(self._input_chunk_handler(input_stream))
 
     def start(self):
         for stream in self._output_streams:

@@ -1,4 +1,4 @@
-function SensorChartEngine(chart_id, url, port, refresh_rate) {
+function SensorChart(chart_id, chart_duration) {
     this._chart_colors = {
         red: 'rgb(255, 99, 132)',
         orange: 'rgb(255, 159, 64)',
@@ -8,109 +8,69 @@ function SensorChartEngine(chart_id, url, port, refresh_rate) {
         purple: 'rgb(153, 102, 255)',
         grey: 'rgb(201, 203, 207)'
     };
-    this._url = url;
-    this._port = port;
-    this._refresh_rate = refresh_rate;
     this._chart_id = chart_id;
+    this._chart_duration = chart_duration;
     this._chart_index = parseInt(this._chart_id.split('_').pop());
     this._chart_ctx = document.getElementById(this._chart_id).getContext("2d");
-    this._worker = new Worker('static/webworker/sensor_stream_handler.js');
-    this._initData();
-    this._initChart();
-    this._initEvents();
+    this._initialized = false;
 }
 
-SensorChartEngine.prototype._initData = function () {
+SensorChart.prototype.isInitialized = function () {
+    return this._initialized;
+}
+
+SensorChart.prototype._initData = function (data) {
+    var names = Object.keys(data);
+    var color_names = Object.keys(this._chart_colors);
+    var colors = this._chart_colors;
+    var datasets = names.map(function (name, index) {
+        var color = colors[color_names[index % color_names.length]];
+        var dataset = {
+            label: name,
+            fill: false,
+            lineTension: 0.2,
+            borderColor: color,
+            borderCapStyle: 'butt',
+            borderDash: [],
+            borderDashOffset: 0.0,
+            borderJoinStyle: 'miter',
+            pointBorderColor: color,
+            pointBackgroundColor: "#fff",
+            pointBorderWidth: 1,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: color,
+            pointHoverBorderColor: color,
+            pointHoverBorderWidth: 2,
+            pointRadius: 1,
+            pointHitRadius: 10,
+            data: data[name],
+            spanGaps: false
+        }
+        return dataset
+    });
     this._chart_data = {
-        datasets: [{
-            label: 'x',
-            fill: false,
-            lineTension: 0.2,
-            borderColor: this._chart_colors.blue,
-            borderCapStyle: 'butt',
-            borderDash: [],
-            borderDashOffset: 0.0,
-            borderJoinStyle: 'miter',
-            pointBorderColor: this._chart_colors.blue,
-            pointBackgroundColor: "#fff",
-            pointBorderWidth: 1,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: this._chart_colors.blue,
-            pointHoverBorderColor: this._chart_colors.blue,
-            pointHoverBorderWidth: 2,
-            pointRadius: 1,
-            pointHitRadius: 10,
-            data: [],
-            spanGaps: false
-        }, {
-            label: 'y',
-            fill: false,
-            lineTension: 0.2,
-            borderColor: this._chart_colors.red,
-            borderCapStyle: 'butt',
-            borderDash: [],
-            borderDashOffset: 0.0,
-            borderJoinStyle: 'miter',
-            pointBorderColor: this._chart_colors.red,
-            pointBackgroundColor: "#fff",
-            pointBorderWidth: 1,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: this._chart_colors.red,
-            pointHoverBorderColor: this._chart_colors.red,
-            pointHoverBorderWidth: 2,
-            pointRadius: 1,
-            pointHitRadius: 10,
-            data: [],
-            spanGaps: false
-        }, {
-            label: 'z',
-            fill: false,
-            lineTension: 0.2,
-            borderColor: this._chart_colors.green,
-            borderCapStyle: 'butt',
-            borderDash: [],
-            borderDashOffset: 0.0,
-            borderJoinStyle: 'miter',
-            pointBorderColor: this._chart_colors.green,
-            pointBackgroundColor: "#fff",
-            pointBorderWidth: 1,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: this._chart_colors.green,
-            pointHoverBorderColor: this._chart_colors.green,
-            pointHoverBorderWidth: 2,
-            pointRadius: 1,
-            pointHitRadius: 10,
-            data: [],
-            spanGaps: false
-        }, {
-            label: 'battery',
-            fill: false,
-            lineTension: 0.2,
-            borderColor: this._chart_colors.grey,
-            borderCapStyle: 'butt',
-            borderDash: [],
-            borderDashOffset: 0.0,
-            borderJoinStyle: 'miter',
-            pointBorderColor: this._chart_colors.grey,
-            pointBackgroundColor: "#fff",
-            pointBorderWidth: 1,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: this._chart_colors.grey,
-            pointHoverBorderColor: this._chart_colors.grey,
-            pointHoverBorderWidth: 2,
-            pointRadius: 1,
-            pointHitRadius: 10,
-            data: [],
-            spanGaps: false
-        }]
+        datasets: datasets
     }
 }
 
-SensorChartEngine.prototype._initChart = function () {
+SensorChart.prototype._initChart = function (title_text = '') {
     this._chart = new Chart(this._chart_ctx, {
         type: 'line',
         data: this._chart_data,
         options: {
+            title: {
+                text: title_text,
+                display: title_text !== '',
+                position: 'left'
+            },
+            layout: {
+                padding: {
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0
+                }
+            },
             responsive: true,
             maintainAspectRatio: false,
             downsample: {
@@ -146,7 +106,7 @@ SensorChartEngine.prototype._initChart = function () {
                     type: 'time',
                     time: {
                         unit: 'millisecond',
-                        stepSize: 5000,
+                        stepSize: this._chart_duration * 1000.0 / 4,
                         displayFormats: {
                             millisecond: 'HH:mm:ss.SSS'
                         }
@@ -157,32 +117,12 @@ SensorChartEngine.prototype._initChart = function () {
     });
 }
 
-SensorChartEngine.prototype._initEvents = function () {
-    // register reset zoom event
-    var engine = this;
-    $('#' + engine._chart_id + '-reset-zoom').click(function () {
-        engine._chart.resetZoom();
-    });
-    $('#' + engine._chart_id + '-connect').click(function () {
-        if ($(this).text() === 'Connect') {
-            engine.connect();
-            $(this).text('Disconnect');
-        } else if ($(this).text() === 'Disconnect') {
-            engine.disconnect();
-            $(this).text('Connect');
-        }
-    });
-}
-
-SensorChartEngine.prototype._addChartData = function (data) {
-    var duration = 10; // seconds
-    var common_start_ts = 0
-    var common_end_ts = 0
+SensorChart.prototype._addChartData = function (data) {
+    var duration = this._chart_duration; // seconds
     this._chart.data.datasets.forEach((dataset) => {
-        var start_ts = 0
-        var end_ts = 0
-        if (dataset.label !== 'battery') {
+        if (data[dataset.label] !== undefined) {
             var n_new = data[dataset.label].length;
+            var end_ts = 0;
             if (n_new > 0) {
                 end_ts = data[dataset.label][n_new - 1]['x'].valueOf() / 1000.0;
             }
@@ -190,86 +130,66 @@ SensorChartEngine.prototype._addChartData = function (data) {
             if (dataset.data.length != 0) {
                 start_ts = dataset.data[0]['x'].valueOf() / 1000.0;
             }
-            common_start_ts = start_ts
-            common_end_ts = end_ts
-        } else {
-            start_ts = common_start_ts
-            end_ts = common_end_ts
+            if (end_ts - start_ts > duration) { // if there are more than 10s data
+                var keep_ts_start = end_ts - duration
+                dataset.data = dataset.data.filter(function (s) { return s['x'].valueOf() / 1000.0 >= keep_ts_start })
+                console.log('dataset length (after filter) ' + dataset.label + ': ' + dataset.data.length);
+            }
+            dataset.data = dataset.data.concat(data[dataset.label]);
+            console.log('dataset length ' + dataset.label + ': ' + dataset.data.length);
         }
-        if (end_ts - start_ts > duration) { // if there are more than 10s data
-            keep_ts_start = end_ts - duration
-            dataset.data = dataset.data.filter(function (s) { return s['x'].valueOf() / 1000.0 >= keep_ts_start })
-            console.log('dataset length (after filter) ' + dataset.label + ': ' + dataset.data.length);
-        }
-        dataset.data = dataset.data.concat(data[dataset.label]);
-        console.log('dataset length ' + dataset.label + ': ' + dataset.data.length);
     });
     this._chart.update({
         duration: 0
     });
 }
 
-SensorChartEngine.prototype.updateChartData = function (data) {
-    var converted_data = this._convertData(data);
-    this._addChartData(converted_data);
+SensorChart.prototype.updateChartData = function (data) {
+    this._addChartData(data);
 }
 
-SensorChartEngine.prototype._convertData = function (stream) {
-    sensor_stream = stream.filter(function (sample) {
-        return 'accel' === sample['DATA_TYPE']
-    });
-    battery_stream = stream.filter(function (sample) {
-        return 'battery' === sample['DATA_TYPE']
-    });
-    var converted_data = {
-        'x': [],
-        'y': [],
-        'z': [],
-        'battery': []
-    };
-    converted_data['x'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['X'] } });
-    converted_data['y'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['Y'] } });
-    converted_data['z'] = sensor_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['Z'] } });
-    var all_values = converted_data['x'].map(function (x) { return x['y'] }).concat(converted_data['y'].map(function (x) { return x['y'] })).concat(converted_data['z'].map(function (x) { return x['y'] }))
-
-    var current_max = 0;
-    if (battery_stream.length > 0) {
-        current_max = ss.max(all_values)
-    }
-
-    if (battery_stream.length > 0) {
-        converted_data['battery'] = battery_stream.map(function (sample) { return { x: moment.unix(sample['HEADER_TIME_STAMP']), y: sample['VALUE']['BATTERY_PERCENTAGE'] / 100.0 } })
-    }
-    return converted_data;
+SensorChart.prototype.initChartData = function (data, stream_name) {
+    this._initData(data);
+    this._initChart(stream_name);
+    this._initialized = true;
 }
 
-SensorChartEngine.prototype.connect = function () {
-    var engine = this;
-    // register callback when receiving data from worker
-    this._worker.onmessage = function (e) {
-        if (e.data['action'] == 'error') {
-            engine._worker.terminate();
-            engine.disconnect();
-        } else if (e.data['action'] == 'data') {
-            if (e.data.content && e.data.content.length > 0) {
-                // console.log('Receiving data buffer of size: ' + e.data.content.length);
-                engine.updateChartData(e.data.content);
-            }
+SensorChart.prototype.updateYRange = function (min_value, max_value) {
+    this._chart.options.scales.yAxes[0].ticks.max = max_value;
+    this._chart.options.scales.yAxes[0].ticks.min = min_value;
+    this._chart.update({
+        duration: 0
+    });
+}
+
+SensorChart.prototype.getYRange = function () {
+    return [this._chart.scales['y-axis-0'].min, this._chart.scales['y-axis-0'].max];
+}
+
+SensorChart.prototype.getDataRange = function () {
+    var common_max_value = 0;
+    var common_min_value = 0;
+    var chart = this;
+    this._chart.data.datasets.forEach((dataset, i) => {
+        if (chart._chart.isDatasetVisible(i)) {
+            var values = dataset.data.map(function (point) { return point['y'] });
+            var max_value = ss.max(values);
+            var min_value = ss.min(values);
+            if (max_value > common_max_value) common_max_value = max_value;
+            if (min_value < common_min_value) common_min_value = min_value;
         }
-    };
-
-    this._worker.postMessage({
-        'action': 'start',
-        'url': engine._url,
-        'port': engine._port,
-        'rate': engine._refresh_rate
-    })
-    console.log('Connecting to ws://' + engine._url + ':' + engine._port + ' at refresh rate: ' + engine._refresh_rate + ' seconds...');
+    });
+    console.log([common_min_value, common_max_value])
+    return [common_min_value, common_max_value];
 }
 
-SensorChartEngine.prototype.disconnect = function () {
-    this._worker.postMessage({
-        'action': 'stop',
-        'port': this._port
+SensorChart.prototype.setTitle = function (text) {
+    this._chart.options.title = {
+        display: true,
+        text: text,
+        position: 'top'
+    };
+    this._chart.update({
+        duration: 0
     });
 }

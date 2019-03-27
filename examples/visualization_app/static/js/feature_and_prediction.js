@@ -1,6 +1,7 @@
-function ArPipelineEngine(feature_chart_ids, url, port, refresh_rate, window_size) {
+function ArPipelineEngine(feature_chart_ids, prediction_chart_ids, url, port, refresh_rate, window_size) {
     this._initIncomeSourceVariables(url, port, refresh_rate);
     this._initFeatureCharts(feature_chart_ids, window_size * 6);
+    this._initPredictionCharts(prediction_chart_ids, window_size * 6);
     this._initEvents();
 }
 
@@ -21,6 +22,16 @@ ArPipelineEngine.prototype._initFeatureCharts = function (ids, chart_duration) {
     });
     this._common_max_value = 0
     this._common_min_value = 0
+}
+
+ArPipelineEngine.prototype._initPredictionCharts = function (ids, chart_duration) {
+    this._prediction_charts = {}
+    this._prediction_chart_mapping = {}
+    var engine = this;
+    ids.forEach(function (id, index) {
+        engine._prediction_charts[id] = new PredictionChart(id, chart_duration);
+        engine._prediction_chart_mapping[id] = undefined;
+    });
 }
 
 ArPipelineEngine.prototype._initEvents = function () {
@@ -50,6 +61,7 @@ ArPipelineEngine.prototype.connect = function () {
                 console.log(e.data.content);
                 engine.convertData(e.data.content);
                 engine.startFeatureCharts();
+                engine.startPredictionCharts();
                 engine.syncFeatureCharts();
             }
         }
@@ -90,7 +102,7 @@ ArPipelineEngine.prototype.convertData = function (stream) {
             var feature_names = names.filter(function (name) { return name !== 'START_TIME' && name !== 'STOP_TIME' && !name.endsWith('PREDICTION') })
 
             feature_names.forEach(function (name) {
-                var display_name = name.split(stream_name + '_')[1];
+                var display_name = name.split('_' + stream_name)[0];
                 engine._feature_data[stream_name][display_name] = stream.map(function (chunk) { return { x: moment.unix(chunk[field][0]['STOP_TIME'] / 1000.0).utc(), y: chunk[field][0][name] } });
             });
         } else if (field.includes('PREDICTION')) {
@@ -99,8 +111,8 @@ ArPipelineEngine.prototype.convertData = function (stream) {
             var names = Object.keys(stream[0][field][0]);
             var class_names = names.filter(function (name) { return name.endsWith('PREDICTION') })
             class_names.forEach(function (name) {
-                var display_name = name.split('_' + task_name)[0]
-                engine._prediction_data[task_name][display_name] = stream.map(function (chunk) { return { x: moment.unix(chunk[field][0]['STOP_TIME'] / 1000.0).utc(), y: sample[field][0][name] } });
+                var display_name = name.split('_PREDICTION')[0]
+                engine._prediction_data[task_name][display_name] = stream.map(function (chunk) { return { x: moment.unix(chunk[field][0]['STOP_TIME'] / 1000.0).utc(), y: chunk[field][0][name] } });
             });
         } else {
             throw new Error('Unrecognized filed: ' + field)
@@ -124,7 +136,26 @@ ArPipelineEngine.prototype.startFeatureCharts = function () {
         if (chart.isInitialized()) {
             chart.updateChartData(data);
         } else {
-            chart.initChartData(data);
+            chart.initChartData(data, stream_name);
+        }
+    });
+}
+
+ArPipelineEngine.prototype.startPredictionCharts = function () {
+    var task_names = Object.keys(this._prediction_data);
+    var chart_names = Object.keys(this._prediction_charts);
+    var engine = this;
+    chart_names.forEach(function (chart_name, index) {
+        var chart = engine._prediction_charts[chart_name];
+        if (engine._prediction_chart_mapping[chart_name] === undefined) {
+            engine._prediction_chart_mapping[chart_name] = task_names[index]
+        }
+        var task_name = engine._prediction_chart_mapping[chart_name]
+        var data = engine._prediction_data[task_name]
+        if (chart.isInitialized()) {
+            chart.updateChartData(data);
+        } else {
+            chart.initChartData(data, task_name);
         }
     });
 }
