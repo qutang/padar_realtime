@@ -9,6 +9,8 @@ from threading import Thread
 import signal
 import os
 from .stream_package import SensorStreamPackage
+from mbientlab.metawear import libmetawear
+from mbientlab.metawear import cbindings
 
 
 class TimestampCorrector(object):
@@ -77,6 +79,7 @@ class MetaWearStream(Thread):
                  accel_grange=8):
         Thread.__init__(self)
         self._device = None
+        self._model_name = 'NA'
         self._accel_sr = accel_sr
         self._accel_grange = accel_grange
         self._address = address
@@ -107,6 +110,8 @@ class MetaWearStream(Thread):
             try:
                 m = MetaWearClient(
                     str(self._address), connect=True, debug=False)
+                self._device = m
+                self._model_name = self.get_model_name()
             except:
                 print('Retry connect to ' + self._address)
                 time.sleep(1)
@@ -126,11 +131,22 @@ class MetaWearStream(Thread):
         m.accelerometer.high_frequency_stream = True
         m.accelerometer.notifications(callback=self._accel_handler)
         m.settings.notifications(callback=self._battery_handler)
-        self._device = m
+
         while True:
             time.sleep(1)
             m.settings.read_battery_state()
         return self
+
+    def get_model_name(self):
+        model_code = libmetawear.mbl_mw_metawearboard_get_model(
+            self._device.mw.board)
+        metawear_models = cbindings.Model()
+        model_names = list(
+            filter(lambda attr: '__' not in attr, dir(metawear_models)))
+        for name in model_names:
+            if getattr(metawear_models, name) == model_code:
+                return name
+        return 'NA'
 
     def run_ws(self, loop, keep_history=True):
         self._keep_history = keep_history
@@ -158,6 +174,20 @@ class MetaWearStream(Thread):
                 self._clients.remove(client)
                 print('remaining clients: ' + str(len(self._clients)))
 
+    def _calibrate_accel_coord_system(self, x, y, z):
+        # axis values are calibrated according to the coordinate system of Actigraph GT9X
+        # http://www.correctline.pl/wp-content/uploads/2015/01/ActiGraph_Device_Axes_Link.png
+        if self._model_name == 'METAMOTION_R':
+            # as normal wear in the case on wrist
+            calibrated_x = y
+            calibrated_y = -x
+            calibrated_z = z
+        else:
+            calibrated_x = x
+            calibrated_y = y
+            calibrated_z = z
+        return (calibrated_x, calibrated_y, calibrated_z)
+
     def _pack_accel_data(self, data):
         real_ts = time.time()
         if self._accel_count == 0:
@@ -178,9 +208,12 @@ class MetaWearStream(Thread):
                                  self._ts_corrector_noloss.next(data, real_ts))
         package.set_timestamp(self._ts_corrector_withloss.next(data, real_ts))
         value = {}
-        value['X'] = data['value'].x
-        value['Y'] = data['value'].y
-        value['Z'] = data['value'].z
+        calibrated_values = self._calibrate_accel_coord_system(
+            data['value'].x, data['value'].y, data['value'].z)
+
+        value['X'] = calibrated_values[0]
+        value['Y'] = calibrated_values[1]
+        value['Z'] = calibrated_values[2]
         package.set_value(value)
 
         return package.to_json_string(), package
