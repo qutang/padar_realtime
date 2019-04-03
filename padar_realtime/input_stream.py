@@ -24,6 +24,15 @@ class InputStream(Thread):
         self._chunk_manager = {}
         self._session_st = session_st
 
+    def get_ws_url(self):
+        return 'ws://' + self._host + ":" + str(self._port)
+
+    def change_window_size(self, window_size):
+        self._window_size = window_size
+
+    def change_update_rate(self, update_rate):
+        self._update_rate = update_rate
+
     def set_session_st(self, session_st):
         self._session_st = session_st
 
@@ -33,14 +42,17 @@ class InputStream(Thread):
         return input_package
 
     async def _ws_handler(self):
-        try:
-            async with websockets.connect('ws://' + self._host + ':' +
-                                          str(self._port)) as websocket:
-                while True:
-                    data = await websocket.recv()
-                    self._handle_input_stream(data)
-        except Exception as e:
-            print(str(e))
+        while True:
+            try:
+                async with websockets.connect('ws://' + self._host + ':' +
+                                              str(self._port)) as websocket:
+                    print('connected to ' + self.get_ws_url())
+                    while True:
+                        data = await websocket.recv()
+                        self._handle_input_stream(data)
+            except Exception as e:
+                await asyncio.sleep(3)
+                print('retry to connect to ' + self.get_ws_url())
 
     async def get_chunk_stream(self):
         while True:

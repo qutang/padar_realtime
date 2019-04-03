@@ -18,19 +18,24 @@ def muss_pipeline(merged, model_files):
     count = merged['MERGED_CHUNK_INDEX']
     stream_names = merged['STREAM_NAMES']
     chunks = merged['CHUNKS']
+    if len(chunks) < 1:
+        return None
     if data_type != 'accel':
         return None
     else:
         feature_json, feature_df = _compute_features(chunks)
-        prediction_json, prediction_df = _make_predictions(
-            feature_df, model_files)
-        _save_features(feature_df, stream_names)
-        _save_predictions(prediction_df, stream_names)
-        result_json = {**feature_json, **prediction_json}
-        result_json['START_TIME'] = st
-        result_json['STOP_TIME'] = et
-        result_json['INDEX'] = count
-        json_str = json.dumps(result_json)
+        if feature_json is not None:
+            prediction_json, prediction_df = _make_predictions(
+                feature_df, model_files)
+            _save_features(feature_df, stream_names)
+            _save_predictions(prediction_df, stream_names)
+            result_json = {**feature_json, **prediction_json}
+            result_json['START_TIME'] = st
+            result_json['STOP_TIME'] = et
+            result_json['INDEX'] = count
+            json_str = json.dumps(result_json)
+        else:
+            json_str = None
         print(json_str)
         return json_str
 
@@ -69,6 +74,8 @@ def _compute_features(chunks):
     for chunk in chunks:
         stream_name = chunk.get_stream_name()
         packages = chunk.get_packages()
+        if len(packages) < 2:
+            return None, None
         dfs = [package.to_dataframe() for package in packages]
         data_df = pd.concat(dfs, axis=0, ignore_index=True)
         clean_df = data_df[['X', 'Y', 'Z']]
@@ -89,7 +96,6 @@ def _compute_features(chunks):
 
 def _make_predictions(feature_df, model_files):
     indexed_feature_df = feature_df.set_index(['START_TIME', 'STOP_TIME'])
-
     prediction_json = {}
     prediction_dfs = []
     for model_file in model_files:
@@ -104,13 +110,15 @@ def _make_predictions(feature_df, model_files):
             try:
                 scaled_X = model_bundle['scaler'].transform(X)
                 scores = model_bundle['model'].predict_proba(scaled_X)[0]
-            except:
+            except Exception as e:
+                print(str(e))
                 scores = len(class_labels) * [np.nan]
             for class_label, score in zip(class_labels, scores):
-                p_df[class_label.upper() + '_PREDICTION'] = [score]
+                p_df[name + '_' + class_label.upper() + '_PREDICTION'] = [
+                    score
+                ]
             p_df['START_TIME'] = feature_df['START_TIME']
             p_df['STOP_TIME'] = feature_df['STOP_TIME']
-            print(p_df)
             prediction_dfs.append(p_df)
             prediction_json[name + '_PREDICTION'] = json.loads(
                 p_df.to_json(orient='records'))
@@ -124,10 +132,11 @@ if __name__ == '__main__':
     num_of_streams = int(sys.argv[1])
     dir_path = os.path.dirname(os.path.realpath(__file__))
     model_files = [
-        os.path.join(dir_path, f)
-        for f in ['DW_DA.MO.posture_model.pkl', 'DW_DA.MO.activity_model.pkl']
+        os.path.join(dir_path, f) for f in [
+            'DW_DA_DT.MO.posture_model.pkl', 'DW_DA_DT.MO.activity_model.pkl',
+            'DW_DA_DT.MO.classic_seven_activities_model.pkl'
+        ]
     ]
-    # names = ['stream1', 'stream2']
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     loop = asyncio.get_event_loop()
     stream_manager = ProcessorStreamManager(

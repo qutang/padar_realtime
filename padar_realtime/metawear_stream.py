@@ -92,7 +92,7 @@ class MetaWearStream(Thread):
         self._last_minute = 0
         self._loop = loop
         self._accel_queue = asyncio.Queue(loop=self._loop)
-        self._server = websockets.serve(
+        self._start_ws_server = websockets.serve(
             self._ws_handler, host=host, port=port, loop=self._loop)
         self._battery_ts_corrector = TimestampCorrector(
             sr=1, method='withloss')
@@ -105,9 +105,17 @@ class MetaWearStream(Thread):
         self._last_ts = 0
         self._accel_count = 0
         self._battery_count = 0
+        self._stop = False
+        self._status = "Available"
+
+    def get_device_address(self):
+        return self._address
+
+    def get_stream_name(self):
+        return self._name
 
     def get_ws_uri(self):
-        return 'http://' + self._host + ':' + str(self._port)
+        return 'ws://' + self._host + ':' + str(self._port)
 
     def run(self):
         while True:
@@ -135,7 +143,7 @@ class MetaWearStream(Thread):
         m.accelerometer.high_frequency_stream = True
         m.accelerometer.notifications(callback=self._accel_handler)
         m.settings.notifications(callback=self._battery_handler)
-
+        self._status = "Stream"
         while True:
             time.sleep(1)
             m.settings.read_battery_state()
@@ -152,14 +160,31 @@ class MetaWearStream(Thread):
                 return name
         return 'NA'
 
-    def run_ws(self, loop, keep_history=True):
+    def get_status(self):
+        return self._status
+
+    def run_ws(self, keep_history=True):
         self._keep_history = keep_history
-        print('Start ws server on: ' + self._host + ':' + str(self._port))
-        loop.run_until_complete(self._server)
+        print('Start ws server on: ' + self.get_ws_uri())
+        self._server = self._loop.run_until_complete(self._start_ws_server)
 
     def stop(self):
         print('Disconnect from sensor')
-        self._device.disconnect()
+        success = False
+        try:
+            self._device.disconnect()
+        except Exception as e:
+            print(e)
+        print('Stop ws server')
+        try:
+            self._stop = True
+            self._server.close()
+            self._loop.run_until_complete(self._server.wait_closed())
+            self._status = "Available"
+            success = True
+        except Exception as e:
+            print(e)
+        return success
 
     async def accel_stream(self):
         while True:
@@ -173,6 +198,8 @@ class MetaWearStream(Thread):
             try:
                 for client in self._clients:
                     await client.send(value)
+                if self._stop:
+                    break
             except websockets.exceptions.ConnectionClosed:
                 print('ws client disconnected')
                 self._clients.remove(client)
@@ -240,6 +267,7 @@ class MetaWearStream(Thread):
         return package.to_json_string()
 
     def _accel_handler(self, data):
+        self._status = "Stream"
         json_package, package = self._pack_accel_data(data)
         if package._package['HEADER_TIME_STAMP_ORIGINAL'] < self._last_ts:
             print('earlier sample detected')
@@ -293,7 +321,7 @@ class MetaWearStreamManager(object):
         self.streams = []
         self._loop = asyncio.new_event_loop()
 
-    def _reset_ble_adaptor(self):
+    def reset_ble_adaptor(self):
         os.system('radiocontrol.exe Bluetooth off')
         time.sleep(1)
         os.system('radiocontrol.exe Bluetooth on')
@@ -329,18 +357,81 @@ class MetaWearStreamManager(object):
                 continue
         return metawears
 
+    def get_status(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream.get_status()
+        return "Unknown"
+
+    def get_stream_name(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream.get_stream_name()
+        return None
+
+    def get_sr(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream._accel_sr
+        return None
+
+    def get_grange(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream._accel_grange
+        return None
+
+    def get_order(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream._order
+        return None
+
+    def get_ws_url(self, addr):
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                return stream.get_ws_uri()
+        return None
+
+    def disconnect(self, addr):
+        to_remove = None
+        success = False
+        for stream in self.streams:
+            if stream.get_device_address() == addr:
+                success = stream.stop()
+                to_remove = stream
+                break
+        if to_remove is not None:
+            if success:
+                self.streams.remove(to_remove)
+                return "Success"
+            else:
+                return "Failure"
+        else:
+            print("Can not find the stream with addr: " + addr)
+            return "Not found"
+
     def scan(self):
-        self._reset_ble_adaptor()
         metawears = self._autoscan_for_metawears()
         print(metawears)
         return metawears
+
+    def stream_exists(self, stream):
+        for s in self.streams:
+            if stream.get_device_address() == s.get_device_address():
+                return 'Address in use'
+            elif stream.get_stream_name() == s.get_stream_name():
+                return 'Name in use'
+            elif stream._order == s._order:
+                return 'Order in use'
+        return False
 
     def init(self, metawears, loop):
         self._loop = loop
         results = metawears
         for metawear in metawears:
             i = metawears.index(metawear)
-            addr = metawear['addr']
+            addr = metawear['address']
             name = metawear['name']
             order = metawear['order']
             accel_sr = metawear['sr']
@@ -354,16 +445,23 @@ class MetaWearStreamManager(object):
                 port=port,
                 accel_sr=accel_sr,
                 accel_grange=accel_grange)
-            self.streams.append(stream)
-            stream.run_ws(self._loop, keep_history=True)
-            try:
-                stream.start()
-                results[i]['ws_uri'] = stream.get_ws_uri()
-            except KeyboardInterrupt:
-                stream.stop()
-                results[i]['ws_uri'] = 'failed to start'
-            # rest for a second before connecting to the next stream
-            time.sleep(1)
+            error_code = self.stream_exists(stream)
+            print(error_code)
+            if error_code == False:
+                print('run sensor')
+                self.streams.append(stream)
+                stream.run_ws(keep_history=True)
+                try:
+                    stream.start()
+                    results[i]['ws_uri'] = stream.get_ws_uri()
+                except KeyboardInterrupt:
+                    stream.stop()
+                    results[i]['ws_uri'] = 'failed to start'
+                # rest for a second before connecting to the next stream
+                time.sleep(1)
+            else:
+                print('error in running sensor')
+                results[i]['error_code'] = error_code
         return results
 
     def start(self,
@@ -371,7 +469,7 @@ class MetaWearStreamManager(object):
               accel_grange=8,
               ws_server=True,
               keep_history=True):
-        self._reset_ble_adaptor()
+        self.reset_ble_adaptor()
         metawears, metawear_stream_names = self._scan_for_metawears()
         print(metawears)
         print(metawear_stream_names)
@@ -392,7 +490,7 @@ class MetaWearStreamManager(object):
             self.streams.append(stream)
             # start ws server first
             if ws_server:
-                stream.run_ws(self._loop, keep_history=keep_history)
+                stream.run_ws(keep_history=keep_history)
             try:
                 stream.start()
             except KeyboardInterrupt:

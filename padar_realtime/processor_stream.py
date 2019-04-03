@@ -120,13 +120,16 @@ class ProcessorStream(object):
     def __init__(self, loop, allow_ws=True, host='*', port=9000):
         self._host = host
         self._port = port
-        self._data_queue = asyncio.Queue()
-        self._result_queue = asyncio.Queue()
+        self._data_queue = asyncio.Queue(loop=loop)
+        self._result_queue = asyncio.Queue(loop=loop)
         self._clients = set()
         self._server = websockets.serve(self._ws_handler, host=host, port=port)
         self._loop = loop
         self._future_results = set()
         self._allow_ws = allow_ws
+
+    def get_ws_url(self):
+        return 'ws://' + self._host + ':' + str(self._port)
 
     def put_input_queue(self, data):
         self._loop.call_soon_threadsafe(self._data_queue.put_nowait, data)
@@ -207,6 +210,7 @@ class ProcessorStreamManager(object):
                  init_input_port=8000,
                  init_output_port=9000,
                  window_size=12.8,
+                 name='processor',
                  update_rate=2):
         self._loop = loop
         self._init_input_port = init_input_port
@@ -216,12 +220,34 @@ class ProcessorStreamManager(object):
         self._window_size = window_size
         self._update_rate = update_rate
         self._merger_manager = {}
+        self._name = name
+        self._status = 'Idle'
 
-    def add_input_stream(self, host='*'):
+    def get_ws_urls(self):
+        urls = []
+        for stream in self._output_streams:
+            urls.append(stream.get_ws_url())
+        return urls
+
+    def change_window_size(self, window_size):
+        if window_size is not None:
+            self._window_size = window_size
+            for stream in self._input_streams:
+                stream.change_window_size(self._window_size)
+
+    def change_update_rate(self, update_rate):
+        if update_rate is not None:
+            self._update_rate = update_rate
+            for stream in self._input_streams:
+                stream.change_update_rate(self._update_rate)
+
+    def add_input_stream(self, host='*', port=None):
+        if port is None:
+            port = len(self._input_streams) + self._init_input_port
         stream = InputStream(
             self._loop,
             host=host,
-            port=len(self._input_streams) + self._init_input_port,
+            port=port,
             window_size=self._window_size,
             update_rate=self._update_rate)
         self._input_streams.append(stream)
@@ -270,6 +296,7 @@ class ProcessorStreamManager(object):
             stream.run()
             stream.run_ws()
         self.start_input_streams()
+        self._status = 'Stream'
         self._loop.run_forever()
 
     def start_simulation(self):
