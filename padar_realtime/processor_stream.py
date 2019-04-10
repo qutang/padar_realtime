@@ -6,7 +6,7 @@ import websockets
 import json
 import functools
 from threading import Thread
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, cpu_count
 import signal
 import os
 import pandas as pd
@@ -21,6 +21,7 @@ import math
 from .stream_package import SensorStreamPackage, SensorStreamChunk
 from collections import deque
 from functools import partial
+import logging
 
 
 class ChunkMerger(object):
@@ -123,10 +124,12 @@ class ProcessorStream(object):
         self._data_queue = asyncio.Queue(loop=loop)
         self._result_queue = asyncio.Queue(loop=loop)
         self._clients = set()
-        self._server = websockets.serve(self._ws_handler, host=host, port=port)
+        self._start_ws_server = websockets.serve(
+            self._ws_handler, host=host, port=port, loop=loop)
         self._loop = loop
         self._future_results = set()
         self._allow_ws = allow_ws
+        self._stopped = False
 
     def get_ws_url(self):
         return 'ws://' + self._host + ':' + str(self._port)
@@ -155,9 +158,14 @@ class ProcessorStream(object):
 
     async def _do_computing(self):
         sleep_time = 2
-        with concurrent.futures.ProcessPoolExecutor() as pool:
+        with concurrent.futures.ProcessPoolExecutor(
+                max_workers=int(cpu_count() / 2)) as pool:
             while True:
                 data = await self._data_queue.get()
+                if data == 'STOP':
+                    print('Stop in do computing')
+                    self._stopped = True
+                    break
                 current_ts = time.time()
                 print(current_ts - self._pipeline['last_run'])
                 if self._pipeline['last_run'] == 0:
@@ -177,24 +185,38 @@ class ProcessorStream(object):
     def run(self):
         print('Waiting for incoming data...')
         self._loop.create_task(self._do_computing())
+        self._loop.create_task(self.wait_closed())
 
     def run_ws(self):
         if self._allow_ws:
             print('Start ws server on: ' + self._host + ':' + str(self._port))
-            self._loop.run_until_complete(self._server)
+            self._server = self._loop.run_until_complete(self._start_ws_server)
         else:
             print('WS server is disabled')
+
+    async def wait_closed(self):
+        while self._stopped == False:
+            await asyncio.sleep(2)
+        print('Stop ws servers')
+        await self._server.wait_closed()
 
     async def result_stream(self):
         while True:
             value = await self._result_queue.get()
             yield value
+            if value == 'STOP':
+                print('stop in result stream')
+                break
 
     async def _ws_handler(self, client, path):
         print('ws client is added')
         self._clients.add(client)
         try:
             async for value in self.result_stream():
+                if value == 'STOP':
+                    print('stop in ws handler')
+                    self._stopped = True
+                    break
                 for client in self._clients:
                     await client.send(value)
         except websockets.exceptions.ConnectionClosed:
@@ -221,7 +243,8 @@ class ProcessorStreamManager(object):
         self._update_rate = update_rate
         self._merger_manager = {}
         self._name = name
-        self._status = 'Idle'
+        self._status = 'stopped'
+        self._ready_to_stop_loop = False
 
     def get_ws_urls(self):
         urls = []
@@ -255,13 +278,13 @@ class ProcessorStreamManager(object):
     def add_processor_stream(self,
                              pipeline_func,
                              host='*',
+                             port=None,
                              ws_server=True,
                              **kwargs):
+        if port is None:
+            port = len(self._output_streams) + self._init_output_port
         output_stream = ProcessorStream(
-            loop=self._loop,
-            allow_ws=ws_server,
-            host=host,
-            port=len(self._output_streams) + self._init_output_port)
+            loop=self._loop, allow_ws=ws_server, host=host, port=port)
         output_stream.set_processor_pipeline(pipeline_func, **kwargs)
         self._output_streams.append(output_stream)
         return self
@@ -272,6 +295,9 @@ class ProcessorStreamManager(object):
 
     async def _input_chunk_handler(self, input_stream):
         async for chunk in input_stream.get_chunk_stream():
+            if chunk == 'STOP':
+                self._send_to_processor(chunk)
+                break
             data_type = chunk.get_data_type()
             if data_type in self._merger_manager:
                 merger = self._merger_manager[data_type]
@@ -291,13 +317,31 @@ class ProcessorStreamManager(object):
             input_stream.start()
             self._loop.create_task(self._input_chunk_handler(input_stream))
 
+    async def wait_closed(self):
+        stop = False
+        while stop == False:
+            stop = True
+            for stream in self._output_streams:
+                stop &= stream._stopped
+            await asyncio.sleep(2)
+        print('Stop loop')
+        self._ready_to_stop_loop = True
+
+    def stop(self):
+        success = True
+        for stream in self._input_streams:
+            stream.stop()
+        for stream in self._output_streams:
+            stream._server.close()
+        return success
+
     def start(self):
         for stream in self._output_streams:
             stream.run()
             stream.run_ws()
         self.start_input_streams()
-        self._status = 'Stream'
-        self._loop.run_forever()
+        self._loop.create_task(self.wait_closed())
+        self._status = 'running'
 
     def start_simulation(self):
         def _simulate():

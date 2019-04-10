@@ -11,6 +11,7 @@ import os
 from .stream_package import SensorStreamPackage
 from mbientlab.metawear import libmetawear
 from mbientlab.metawear import cbindings
+import logging
 
 
 class TimestampCorrector(object):
@@ -90,10 +91,8 @@ class MetaWearStream(Thread):
         self._port = port
         self._actual_sr = 0
         self._last_minute = 0
-        self._loop = loop
-        self._accel_queue = asyncio.Queue(loop=self._loop)
-        self._start_ws_server = websockets.serve(
-            self._ws_handler, host=host, port=port, loop=self._loop)
+        if loop is not None:
+            self.set_loop(loop)
         self._battery_ts_corrector = TimestampCorrector(
             sr=1, method='withloss')
         self._ts_corrector_original = TimestampCorrector(
@@ -108,6 +107,15 @@ class MetaWearStream(Thread):
         self._stop = False
         self._status = "Available"
 
+    def set_loop(self, loop):
+        self._loop = loop
+        self._accel_queue = asyncio.Queue(loop=self._loop)
+        self._start_ws_server = websockets.serve(
+            self._ws_handler,
+            host=self._host,
+            port=self._port,
+            loop=self._loop)
+
     def get_device_address(self):
         return self._address
 
@@ -118,18 +126,18 @@ class MetaWearStream(Thread):
         return 'ws://' + self._host + ':' + str(self._port)
 
     def run(self):
-        while True:
+        while not self._stop:
             try:
                 m = MetaWearClient(
                     str(self._address), connect=True, debug=False)
                 self._device = m
                 self._model_name = self.get_model_name()
             except:
-                print('Retry connect to ' + self._address)
+                logging.info('Retry connect to ' + self._address)
                 time.sleep(1)
                 continue
             break
-        print("New metawear connected: {0}".format(m))
+        logging.info("New metawear connected: {0}".format(m))
         # high frequency throughput connection setup
         m.settings.set_connection_parameters(7.5, 7.5, 0, 6000)
         # Up to 4dB for Class 2 BLE devices
@@ -144,7 +152,7 @@ class MetaWearStream(Thread):
         m.accelerometer.notifications(callback=self._accel_handler)
         m.settings.notifications(callback=self._battery_handler)
         self._status = "Stream"
-        while True:
+        while not self._stop:
             time.sleep(1)
             m.settings.read_battery_state()
         return self
@@ -165,17 +173,18 @@ class MetaWearStream(Thread):
 
     def run_ws(self, keep_history=True):
         self._keep_history = keep_history
-        print('Start ws server on: ' + self.get_ws_uri())
+        logging.info('Start ws server on: ' + self.get_ws_uri())
         self._server = self._loop.run_until_complete(self._start_ws_server)
 
     def stop(self):
-        print('Disconnect from sensor')
+        logging.info('Disconnect from sensor')
         success = False
         try:
+            self._device.accelerometer.stop()
             self._device.disconnect()
         except Exception as e:
-            print(e)
-        print('Stop ws server')
+            logging.error(str(e))
+        logging.info('Stop ws server')
         try:
             self._stop = True
             self._server.close()
@@ -183,7 +192,7 @@ class MetaWearStream(Thread):
             self._status = "Available"
             success = True
         except Exception as e:
-            print(e)
+            logging.error(str(e))
         return success
 
     async def accel_stream(self):
@@ -192,7 +201,7 @@ class MetaWearStream(Thread):
             yield value
 
     async def _ws_handler(self, client, path):
-        print('ws client is added')
+        logging.info('ws client is added')
         self._clients.add(client)
         async for value in self.accel_stream():
             try:
@@ -201,9 +210,9 @@ class MetaWearStream(Thread):
                 if self._stop:
                     break
             except websockets.exceptions.ConnectionClosed:
-                print('ws client disconnected')
+                logging.info('ws client disconnected')
                 self._clients.remove(client)
-                print('remaining clients: ' + str(len(self._clients)))
+                logging.info('remaining clients: ' + str(len(self._clients)))
 
     def _calibrate_accel_coord_system(self, x, y, z):
         # axis values are calibrated according to the coordinate system of Actigraph GT9X
@@ -270,7 +279,7 @@ class MetaWearStream(Thread):
         self._status = "Stream"
         json_package, package = self._pack_accel_data(data)
         if package._package['HEADER_TIME_STAMP_ORIGINAL'] < self._last_ts:
-            print('earlier sample detected')
+            logging.warning('earlier sample detected')
         else:
             self._last_ts = package._package['HEADER_TIME_STAMP_ORIGINAL']
 
@@ -282,17 +291,17 @@ class MetaWearStream(Thread):
                 self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
                                                 json_package)
         if self._last_minute == 0:
-            print(package.to_dataframe())
+            logging.debug(package.to_dataframe())
             self._last_minute = time.time() * 1000.0
         if time.time() * 1000.0 - self._last_minute > 1000.0:
-            print(self._address + ' sr: ' + str(self._actual_sr) + ', ' +
-                  'time diff: ' +
-                  str(package.get_timestamp() -
-                      package._package['HEADER_TIME_STAMP_REAL']))
+            logging.info(self._address + ' sr: ' + str(self._actual_sr) +
+                         ', ' + 'time diff: ' +
+                         str(package.get_timestamp() -
+                             package._package['HEADER_TIME_STAMP_REAL']))
             self._actual_sr = 0
             self._last_minute = time.time() * 1000.0
             self._loop.call_soon_threadsafe(
-                print, self._address + ' queue size: ' + str(
+                logging.debug, self._address + ' queue size: ' + str(
                     self._accel_queue.qsize()))
         else:
             self._actual_sr = self._actual_sr + 1
@@ -301,8 +310,8 @@ class MetaWearStream(Thread):
     def _battery_handler(self, data):
         battery = data['value']
         self._loop.call_soon_threadsafe(
-            print, 'battery level: ' + str(battery.voltage) + ', ' + str(
-                battery.charge))
+            logging.info, 'battery level: ' + str(battery.voltage) + ', ' +
+            str(battery.charge))
         json_package = self._pack_battery_data(data)
         if self._keep_history:
             self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
@@ -312,6 +321,24 @@ class MetaWearStream(Thread):
                 self._loop.call_soon_threadsafe(self._accel_queue.put_nowait,
                                                 json_package)
         self._battery_count += 1
+
+
+class MetaWearScanner():
+    def scan(self):
+        metawears = set()
+        retries = 0
+        while retries < 3:
+            logging.info('Scanning metawear devices nearby...')
+            try:
+                retries += 1
+                candidates = discover_devices(timeout=5)
+                metawears |= set(
+                    map(lambda d: d[0],
+                        filter(lambda d: d[1] == 'MetaWear', candidates)))
+            except ValueError as e:
+                logging.error(str(e))
+                continue
+        return list(metawears)
 
 
 class MetaWearStreamManager(object):
@@ -330,7 +357,7 @@ class MetaWearStreamManager(object):
         metawears = []
         metawear_stream_names = []
         while len(metawears) < self._max_devices:
-            print('scanning...')
+            logging.info('Scanning metawear devices nearby...')
             try:
                 addr = select_device(timeout=3)
                 stream_name = input('enter stream name: ')
@@ -346,7 +373,7 @@ class MetaWearStreamManager(object):
         metawears = set()
         retries = 0
         while len(metawears) < self._max_devices and retries <= 5:
-            print('scanning...')
+            logging.info('Scanning metawear devices nearby...')
             try:
                 retries += 1
                 candidates = discover_devices(timeout=3)
@@ -408,12 +435,12 @@ class MetaWearStreamManager(object):
             else:
                 return "Failure"
         else:
-            print("Can not find the stream with addr: " + addr)
+            logging.info("Can not find the stream with addr: " + addr)
             return "Not found"
 
     def scan(self):
         metawears = self._autoscan_for_metawears()
-        print(metawears)
+        logging.debug(metawears)
         return metawears
 
     def stream_exists(self, stream):
@@ -446,9 +473,9 @@ class MetaWearStreamManager(object):
                 accel_sr=accel_sr,
                 accel_grange=accel_grange)
             error_code = self.stream_exists(stream)
-            print(error_code)
+            logging.debug(error_code)
             if error_code == False:
-                print('run sensor')
+                logging.info('Start to run a sensor')
                 self.streams.append(stream)
                 stream.run_ws(keep_history=True)
                 try:
@@ -460,7 +487,7 @@ class MetaWearStreamManager(object):
                 # rest for a second before connecting to the next stream
                 time.sleep(1)
             else:
-                print('error in running sensor')
+                logging.warning('error in running sensor')
                 results[i]['error_code'] = error_code
         return results
 
@@ -471,8 +498,8 @@ class MetaWearStreamManager(object):
               keep_history=True):
         self.reset_ble_adaptor()
         metawears, metawear_stream_names = self._scan_for_metawears()
-        print(metawears)
-        print(metawear_stream_names)
+        logging.debug(metawears)
+        logging.debug(metawear_stream_names)
 
         for i in range(self._max_devices):
             address = metawears[i]

@@ -18,11 +18,12 @@ class InputStream(Thread):
         self._host = host
         self._port = port
         self._loop = loop
-        self._queue = asyncio.Queue()
+        self._queue = asyncio.Queue(loop=self._loop)
         self._window_size = window_size
         self._update_rate = update_rate
         self._chunk_manager = {}
         self._session_st = session_st
+        self._stop = False
 
     def get_ws_url(self):
         return 'ws://' + self._host + ":" + str(self._port)
@@ -41,23 +42,47 @@ class InputStream(Thread):
         input_package.from_json_string(value)
         return input_package
 
+    def stop(self):
+        self._stop = True
+
+    def send_stop_to_queue(self):
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, 'STOP')
+
     async def _ws_handler(self):
         while True:
             try:
                 async with websockets.connect('ws://' + self._host + ':' +
                                               str(self._port)) as websocket:
-                    print('connected to ' + self.get_ws_url())
-                    while True:
-                        data = await websocket.recv()
-                        self._handle_input_stream(data)
+                    try:
+                        print('connected to ' + self.get_ws_url())
+                        while True:
+                            data = await websocket.recv()
+                            if self._stop:
+                                self.send_stop_to_queue()
+                                break
+                            self._handle_input_stream(data)
+                    except Exception as e:
+                        print(str(e))
+                        self.send_stop_to_queue()
+                        break
+            except OSError as e:
+                print(str(e))
+                asyncio.sleep(3)
+                print('Retry connect to ' + 'ws://' + self._host + ':' +
+                      str(self._port))
+                if self._stop:
+                    self.send_stop_to_queue()
+                    break
             except Exception as e:
-                await asyncio.sleep(3)
-                print('retry to connect to ' + self.get_ws_url())
+                self.send_stop_to_queue()
+                break
 
     async def get_chunk_stream(self):
         while True:
             chunk = await self._queue.get()
             yield chunk
+            if chunk == 'STOP':
+                break
 
     def _handle_input_stream(self, data):
         package = self._create_input_package(data)
