@@ -61,10 +61,16 @@ class InputStream(Thread):
                                 self.send_stop_to_queue()
                                 break
                             self._handle_input_stream(data)
+                    except websockets.exceptions.ConnectionClosed as e:
+                        print(str(e))
+                        if self._stop:
+                            self.send_stop_to_queue()
+                            break
                     except Exception as e:
                         print(str(e))
-                        self.send_stop_to_queue()
-                        break
+                        if self._stop:
+                            self.send_stop_to_queue()
+                            break
             except OSError as e:
                 print(str(e))
                 asyncio.sleep(3)

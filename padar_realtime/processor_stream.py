@@ -118,7 +118,12 @@ class ChunkMerger(object):
 
 
 class ProcessorStream(object):
-    def __init__(self, loop, allow_ws=True, host='*', port=9000):
+    def __init__(self,
+                 loop,
+                 allow_ws=True,
+                 host='*',
+                 port=9000,
+                 number_of_windows=None):
         self._host = host
         self._port = port
         self._data_queue = asyncio.Queue(loop=loop)
@@ -130,6 +135,9 @@ class ProcessorStream(object):
         self._future_results = set()
         self._allow_ws = allow_ws
         self._stopped = False
+        self._ws_server_stopped = False
+        self._number_of_windows = number_of_windows
+        self._result_counter = 0
 
     def get_ws_url(self):
         return 'ws://' + self._host + ':' + str(self._port)
@@ -137,8 +145,18 @@ class ProcessorStream(object):
     def put_input_queue(self, data):
         self._loop.call_soon_threadsafe(self._data_queue.put_nowait, data)
 
+    def put_output_queue(self, data):
+        def _put_into_queue():
+            self._result_queue.put_nowait(data)
+            self._result_counter += 1
+
+        self._loop.call_soon_threadsafe(_put_into_queue)
+
     def get_input_queue_size(self):
         return self._data_queue.qsize()
+
+    def get_output_queue_size(self):
+        return self._result_queue.qsize()
 
     def set_processor_pipeline(self, pipeline, **kwargs):
         func = partial(pipeline, **kwargs)
@@ -151,8 +169,7 @@ class ProcessorStream(object):
         # print('computed data: ' + str(result[0]['HEADER_TIME_STAMP']))
         # if len(self._clients) > 0:
         if self._allow_ws and result is not None:
-            self._loop.call_soon_threadsafe(self._result_queue.put_nowait,
-                                            result)
+            self.put_output_queue(result)
             self._loop.call_soon_threadsafe(
                 print, 'result_queue size: ' + str(self._result_queue.qsize()))
 
@@ -163,8 +180,12 @@ class ProcessorStream(object):
             while True:
                 data = await self._data_queue.get()
                 if data == 'STOP':
-                    print('Stop in do computing')
-                    self._stopped = True
+                    if len(self._clients) > 0:
+                        self.put_output_queue(data)
+                        print('Stop in do computing')
+                    else:
+                        print('Stop in do computing')
+                        self._stopped = True
                     break
                 current_ts = time.time()
                 print(current_ts - self._pipeline['last_run'])
@@ -198,11 +219,14 @@ class ProcessorStream(object):
         while self._stopped == False:
             await asyncio.sleep(2)
         print('Stop ws servers')
+        self._server.close()
         await self._server.wait_closed()
+        self._ws_server_stopped = True
 
     async def result_stream(self):
         while True:
             value = await self._result_queue.get()
+            print(value)
             yield value
             if value == 'STOP':
                 print('stop in result stream')
@@ -233,7 +257,8 @@ class ProcessorStreamManager(object):
                  init_output_port=9000,
                  window_size=12.8,
                  name='processor',
-                 update_rate=2):
+                 update_rate=2,
+                 number_of_windows=None):
         self._loop = loop
         self._init_input_port = init_input_port
         self._init_output_port = init_output_port
@@ -245,6 +270,8 @@ class ProcessorStreamManager(object):
         self._name = name
         self._status = 'stopped'
         self._ready_to_stop_loop = False
+        self._number_of_windows = number_of_windows
+        self._window_counter = 0
 
     def get_ws_urls(self):
         urls = []
@@ -317,30 +344,45 @@ class ProcessorStreamManager(object):
             input_stream.start()
             self._loop.create_task(self._input_chunk_handler(input_stream))
 
+    async def auto_close(self):
+        stop_processor = False
+        while True:
+            for stream in self._output_streams:
+                if stream._result_counter >= self._number_of_windows:
+                    stop_processor = True
+                    break
+            if stop_processor == True:
+                break
+            await asyncio.sleep(1)
+        print('Stop in auto close')
+        self.stop()
+
     async def wait_closed(self):
         stop = False
         while stop == False:
             stop = True
             for stream in self._output_streams:
-                stop &= stream._stopped
-            await asyncio.sleep(2)
-        print('Stop loop')
+                stop &= stream._ws_server_stopped
+            await asyncio.sleep(1)
+        print('Ready to stop loop')
         self._ready_to_stop_loop = True
 
     def stop(self):
         success = True
         for stream in self._input_streams:
             stream.stop()
-        for stream in self._output_streams:
-            stream._server.close()
         return success
 
     def start(self):
         for stream in self._output_streams:
             stream.run()
             stream.run_ws()
-        self.start_input_streams()
+        if self._number_of_windows is not None:
+            print("Start auto close function")
+            self._loop.create_task(self.auto_close())
+        print('Start closing waiter')
         self._loop.create_task(self.wait_closed())
+        self.start_input_streams()
         self._status = 'running'
 
     def start_simulation(self):
