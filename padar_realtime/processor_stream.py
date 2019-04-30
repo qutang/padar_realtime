@@ -340,6 +340,7 @@ class ProcessorStreamManager(object):
         session_st = time.time()
         print(session_st)
         for input_stream in self._input_streams:
+            print('Starting input stream: ' + input_stream.get_ws_url())
             input_stream.set_session_st(session_st)
             input_stream.start()
             self._loop.create_task(self._input_chunk_handler(input_stream))
@@ -377,7 +378,7 @@ class ProcessorStreamManager(object):
         for stream in self._output_streams:
             stream.run()
             stream.run_ws()
-        if self._number_of_windows is not None:
+        if self._number_of_windows is not None and self._number_of_windows > 0:
             print("Start auto close function")
             self._loop.create_task(self.auto_close())
         print('Start closing waiter')

@@ -51,8 +51,7 @@ class InputStream(Thread):
     async def _ws_handler(self):
         while True:
             try:
-                async with websockets.connect('ws://' + self._host + ':' +
-                                              str(self._port)) as websocket:
+                async with websockets.connect(self.get_ws_url()) as websocket:
                     try:
                         print('connected to ' + self.get_ws_url())
                         while True:
