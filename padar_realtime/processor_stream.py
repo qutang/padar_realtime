@@ -176,7 +176,7 @@ class ProcessorStream(object):
     async def _do_computing(self):
         sleep_time = 2
         with concurrent.futures.ProcessPoolExecutor(
-                max_workers=int(cpu_count() / 2)) as pool:
+                max_workers=int(cpu_count() - 1)) as pool:
             while True:
                 data = await self._data_queue.get()
                 if data == 'STOP':
