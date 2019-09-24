@@ -21,7 +21,7 @@ class FileStream(object):
             df = self._df_to_write.get()
             if df is None:
                 break
-            df.to_csv(self._filename, header=True, mode=mode, index=False)
+            df.to_csv(self._filename, header=header, mode=mode, index=False)
 
     def start(self):
         threading.Thread(target=self.writer).start()
