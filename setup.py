@@ -8,9 +8,6 @@ setup(
     description='Real-time engine used to process and visualize accelerometer data for padar package',
     long_description=open('README.md').read(),
     install_requires=[
-        "websockets", "flask", "arrow", "pandas",
-    ],
-    dependency_links=[
-        'git+https://github.com/qutang/pymetawear.git@master#egg=pymetawear'
+        "websockets", "flask", "arrow", "pandas", "pymetawear@git+https://github.com/qutang/pymetawear.git@master"
     ]
 )
