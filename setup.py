@@ -2,13 +2,15 @@ from setuptools import setup, find_packages
 
 setup(
     name='padar_realtime',
-    version='1.4.4',
+    version='1.4.5',
     packages=find_packages(),
     include_package_data=True,
     description='Real-time engine used to process and visualize accelerometer data for padar package',
     long_description=open('README.md').read(),
     install_requires=[
-        "websockets", "flask", "arrow", "pymetawear", "pandas",
-        'warble'
+        "websockets", "flask", "arrow", "pandas",
     ],
+    dependency_links=[
+        'git+https://github.com/qutang/pymetawear.git@master#egg=pymetawear'
+    ]
 )
