@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='padar_realtime',
-    version='1.4.5',
+    version='1.4.6',
     packages=find_packages(),
     include_package_data=True,
     description='Real-time engine used to process and visualize accelerometer data for padar package',
